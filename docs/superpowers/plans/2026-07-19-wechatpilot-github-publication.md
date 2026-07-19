@@ -256,7 +256,7 @@ Expected: one new local commit after the verified baseline.
 **Files:**
 - Remote state only; no new local files
 
-- [ ] **Step 1: Reverify GitHub identity, target availability, and repository scope**
+- [x] **Step 1: Reverify GitHub identity, target availability, and repository scope**
 
 Run:
 
@@ -269,7 +269,7 @@ git remote -v
 
 Expected: active login `kdnsna`; target repository absent; no conflicting remote.
 
-- [ ] **Step 2: Create the private repository and push `main`**
+- [x] **Step 2: Create the private repository and push `main`**
 
 Run:
 
@@ -284,12 +284,14 @@ gh repo create WeChatPilot \
 
 Expected: `https://github.com/kdnsna/WeChatPilot` is created, `main` is pushed, and `origin/main` tracks the local branch.
 
+Execution note: GitHub CLI 2.88.1 misclassified the isolated Git worktree because `git rev-parse --git-dir` returned the worktree's absolute gitdir instead of `.git`. The repository was therefore created with `gh repo create kdnsna/WeChatPilot --private`, then connected and pushed with `git remote add origin git@github.com:kdnsna/WeChatPilot.git` and `git push -u origin main`. The resulting remote and branch state are equivalent to the planned command.
+
 ### Task 7: Configure repository metadata and project management
 
 **Files:**
 - GitHub repository settings, labels, milestone, and issues
 
-- [ ] **Step 1: Configure merge policy, features, and topics**
+- [x] **Step 1: Configure merge policy, features, and topics**
 
 After checking `gh repo edit --help` for supported flags, configure:
 
@@ -318,7 +320,7 @@ gh repo edit kdnsna/WeChatPilot \
 
 Expected: repository settings and nine topics match the approved design.
 
-- [ ] **Step 2: Create the project labels**
+- [x] **Step 2: Create the project labels**
 
 Create or update these exact label definitions using `gh label create --force --repo kdnsna/WeChatPilot`:
 
@@ -337,7 +339,7 @@ triage           D4C5F9  等待分类
 
 Expected: all ten labels exist with descriptions and stable colors.
 
-- [ ] **Step 3: Create the v1.1 milestone**
+- [x] **Step 3: Create the v1.1 milestone**
 
 Run:
 
@@ -349,7 +351,7 @@ gh api --method POST repos/kdnsna/WeChatPilot/milestones \
 
 Expected: one open milestone named `v1.1 通用 Chatbot 基础`.
 
-- [ ] **Step 4: Create four scoped issues in the milestone**
+- [x] **Step 4: Create four scoped issues in the milestone**
 
 Create the following issues with `gh issue create --repo kdnsna/WeChatPilot --milestone 'v1.1 通用 Chatbot 基础'`:
 
@@ -378,7 +380,7 @@ Expected: four open, labeled issues attached to the milestone.
 **Files:**
 - Inspect GitHub state and local Git state
 
-- [ ] **Step 1: Verify repository identity and settings**
+- [x] **Step 1: Verify repository identity and settings**
 
 Run:
 
@@ -391,7 +393,7 @@ gh issue list --repo kdnsna/WeChatPilot --milestone 'v1.1 通用 Chatbot 基础'
 
 Expected: private `main` repository, approved settings/topics, ten custom labels, one open milestone, and four open issues.
 
-- [ ] **Step 2: Wait for the first CI run and require success**
+- [x] **Step 2: Wait for the first CI run and require success**
 
 Run:
 
@@ -402,7 +404,7 @@ gh run watch --repo kdnsna/WeChatPilot <database-id> --exit-status
 
 Expected: the initial `main` CI run concludes `success`. If it fails, inspect with `gh run view --log-failed`, fix the demonstrated cause, rerun local gates, commit, push, and recheck.
 
-- [ ] **Step 3: Perform the final local publication audit**
+- [x] **Step 3: Perform the final local publication audit**
 
 Run:
 
