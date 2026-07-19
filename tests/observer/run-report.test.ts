@@ -138,7 +138,45 @@ describe("sanitizeReportText", () => {
         "/Users/example/private-project /Users/alice/work/file /home/bob/app/file",
         options,
       ),
-    ).toBe("[LOCAL_PATH] [LOCAL_PATH]");
+    ).toBe("[LOCAL_PATH]");
+  });
+
+  it("fails closed after an exact home project root and is idempotent", () => {
+    const result = sanitizeReportText(
+      "before /Users/example/private-project/output/private.txt after",
+      options,
+    );
+
+    expect(result).toBe("before [LOCAL_PATH]");
+    expect(result === null ? null : sanitizeReportText(result, options)).toBe(
+      result,
+    );
+  });
+
+  it("closes paths reconstructed by line-break deletion and is idempotent", () => {
+    const probes = [
+      {
+        value: "before /Use\nrs/alice/private.txt after",
+        expected: "before [LOCAL_PATH]",
+      },
+      {
+        value: "/ho\nme/bob/private.txt after",
+        expected: "[LOCAL_PATH]",
+      },
+      {
+        value:
+          "before /Use\nrs/example/private-project/output/private.txt after",
+        expected: "before [LOCAL_PATH]",
+      },
+    ] as const;
+
+    for (const { value, expected } of probes) {
+      const result = sanitizeReportText(value, options);
+      expect(result).toBe(expected);
+      expect(result === null ? null : sanitizeReportText(result, options)).toBe(
+        result,
+      );
+    }
   });
 
   it("fails closed for quoted paths and bounds unquoted paths", () => {
@@ -375,6 +413,36 @@ describe("buildRunReport", () => {
 
     expect(JSON.stringify(report).includes(privateMarker)).toBe(false);
     expect(report.summary).toEqual(["token=[REDACTED]"]);
+  });
+
+  it("closes exact and reconstructed paths in a schema-valid built report", () => {
+    const report = buildRunReport({
+      authority,
+      projectRoot: "/Users/example/private-project",
+      draft: {
+        version: 1,
+        summary: [
+          "root /Users/example/private-project/output/private.txt after",
+          "mac /Use\nrs/alice/private.txt after",
+          "linux /ho\nme/bob/private.txt after",
+          "split-root /Use\nrs/example/private-project/output/private.txt after",
+        ],
+        metrics: [],
+        artifacts: [],
+      },
+    });
+
+    expect(report.summary).toEqual([
+      "root [LOCAL_PATH]",
+      "mac [LOCAL_PATH]",
+      "linux [LOCAL_PATH]",
+      "split-root [LOCAL_PATH]",
+    ]);
+    expect(RunReportSchema.parse(report)).toEqual(report);
+    const serialized = JSON.stringify(report);
+    for (const fragment of ["output/private.txt", "alice", "bob"]) {
+      expect(serialized.includes(fragment)).toBe(false);
+    }
   });
 
   it("does not retain quote-bearing home path fragments in a built report", () => {

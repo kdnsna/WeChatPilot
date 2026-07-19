@@ -34,6 +34,13 @@ function findHomePrefix(line: string): number | null {
   return Math.min(macosIndex, linuxIndex);
 }
 
+function redactionStartIndex(line: string, pathIndex: number): number {
+  const precedingCharacter = line[pathIndex - 1];
+  return precedingCharacter === "'" || precedingCharacter === '"'
+    ? pathIndex - 1
+    : pathIndex;
+}
+
 function redactHomePathsInLine(line: string): string {
   const prefixIndex = findHomePrefix(line);
   if (prefixIndex === null) {
@@ -42,11 +49,7 @@ function redactHomePathsInLine(line: string): string {
 
   // POSIX filenames make path boundaries in free text impossible to prove.
   // Fail closed from the first home prefix through this line.
-  const precedingCharacter = line[prefixIndex - 1];
-  const replacementIndex =
-    precedingCharacter === "'" || precedingCharacter === '"'
-      ? prefixIndex - 1
-      : prefixIndex;
+  const replacementIndex = redactionStartIndex(line, prefixIndex);
   return `${line.slice(0, replacementIndex)}[LOCAL_PATH]`;
 }
 
@@ -54,6 +57,28 @@ function redactHomePaths(value: string): string {
   return value
     .split(/(\r\n|\r|\n)/u)
     .map((line) => redactHomePathsInLine(line))
+    .join("");
+}
+
+function redactProjectRootInLine(line: string, projectRoot: string): string {
+  if (!projectRoot.startsWith("/Users/") && !projectRoot.startsWith("/home/")) {
+    return line.replaceAll(projectRoot, "[LOCAL_PATH]");
+  }
+
+  const projectRootIndex = line.indexOf(projectRoot);
+  if (projectRootIndex < 0) {
+    return line;
+  }
+  return `${line.slice(0, redactionStartIndex(line, projectRootIndex))}[LOCAL_PATH]`;
+}
+
+function redactProjectRoot(value: string, projectRoot: string): string {
+  if (projectRoot.length === 0) {
+    return value;
+  }
+  return value
+    .split(/(\r\n|\r|\n)/u)
+    .map((line) => redactProjectRootInLine(line, projectRoot))
     .join("");
 }
 
@@ -80,13 +105,10 @@ export function sanitizeReportText(
       return null;
     }
 
-    let sanitizedLine = closureRedacted;
-    if (options.projectRoot.length > 0) {
-      sanitizedLine = sanitizedLine.replaceAll(
-        options.projectRoot,
-        "[LOCAL_PATH]",
-      );
-    }
+    const sanitizedLine = redactProjectRoot(
+      closureRedacted,
+      options.projectRoot,
+    );
     sanitizedLines.push(
       redactHomePaths(sanitizedLine).replace(URL_TEXT, "[URL]"),
     );
@@ -96,7 +118,9 @@ export function sanitizeReportText(
   if (typeof joinedClosureRedacted !== "string") {
     return null;
   }
-  const sanitized = joinedClosureRedacted
+  const sanitized = redactHomePaths(
+    redactProjectRoot(joinedClosureRedacted, options.projectRoot),
+  )
     .replace(URL_TEXT, "[URL]")
     .replaceAll(/\s+/gu, " ")
     .trim();
