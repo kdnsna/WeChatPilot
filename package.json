@@ -22,6 +22,7 @@
     "health": "tsx src/cli/health.ts"
   },
   "dependencies": {
+    "@resvg/resvg-js": "2.6.2",
     "rss-parser": "^3.13.0",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
