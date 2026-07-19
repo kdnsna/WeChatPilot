@@ -29,8 +29,11 @@ function project(): string {
   return root;
 }
 
-function lockPath(root: string): string {
-  return join(root, ".state", "locks", "observer-daily-tech-digest.lock");
+function lockPath(
+  root: string,
+  taskId: "daily-tech-digest" | "codex-wechat-observer-test" = "daily-tech-digest",
+): string {
+  return join(root, ".state", "locks", `observer-${taskId}.lock`);
 }
 
 function writeLock(root: string, pid = 11_111): void {
@@ -57,6 +60,26 @@ afterEach(() => {
 });
 
 describe("observer task lock", () => {
+  it("allows exactly the daily and fixed test-card locks to coexist", async () => {
+    const root = project();
+    const daily = await acquireObserverTaskLock({
+      projectRoot: root,
+      taskId: "daily-tech-digest",
+    });
+    const testCard = await acquireObserverTaskLock({
+      projectRoot: root,
+      taskId: "codex-wechat-observer-test",
+    });
+
+    expect(readdirSync(join(root, ".state", "locks")).sort()).toEqual([
+      "observer-codex-wechat-observer-test.lock",
+      "observer-daily-tech-digest.lock",
+    ]);
+    await testCard.release();
+    expect(statSync(lockPath(root, "daily-tech-digest")).isFile()).toBe(true);
+    await daily.release();
+  });
+
   it("accepts only the audited task id and never derives a filename from input", async () => {
     const root = project();
     await expect(

@@ -27,7 +27,10 @@ const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const SAFE_ERROR_MESSAGE = "Invalid observer task lock";
 
-const TaskIdSchema = ObserverJobSchema.shape.id;
+const TaskIdSchema = z.union([
+  ObserverJobSchema.shape.id,
+  z.literal("codex-wechat-observer-test"),
+]);
 const PositivePidSchema = z.number().int().positive().safe();
 const LockRecordSchema = z
   .object({

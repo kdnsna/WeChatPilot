@@ -13,7 +13,10 @@ import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { sendFixedRunReportTest } from "../../src/cli/send-run-report-test.js";
+import {
+  runSendRunReportTestCli,
+  sendFixedRunReportTest,
+} from "../../src/cli/send-run-report-test.js";
 import {
   RunReportDeliveryBlockedError,
   RunReportDeliveryIndeterminateError,
@@ -24,6 +27,10 @@ import {
   WechatLoginExpiredError,
 } from "../../src/delivery/wechat.js";
 import type { RunReport } from "../../src/observer/run-report.js";
+import {
+  ObserverTaskBusyError,
+  acquireObserverTaskLock,
+} from "../../src/observer/task-lock.js";
 
 const NOW = new Date("2026-07-20T01:00:00.000Z");
 const FIRST_ID = "11111111-1111-4111-8111-111111111111";
@@ -66,6 +73,145 @@ afterEach(() => {
 });
 
 describe("fixed run-report test checkpoint", () => {
+  it("rejects a concurrent first invocation before duplicate delivery", async () => {
+    const root = project();
+    let startFirst!: () => void;
+    let finishFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      startFirst = resolve;
+    });
+    const firstCanFinish = new Promise<void>((resolve) => {
+      finishFirst = resolve;
+    });
+    const createRunId = vi.fn(() => FIRST_ID);
+    const render = vi.fn(({ report }: { report: RunReport }) => artifact(root, report));
+    const deliver = vi.fn(async () => {
+      if (deliver.mock.calls.length === 1) {
+        startFirst();
+        await firstCanFinish;
+      }
+      return {
+        status: "sent" as const,
+        textChunks: 1,
+        image: "sent" as const,
+        textAttempt: 1,
+        imageAttempt: 1,
+      };
+    });
+    const dependencies = {
+      now: () => NOW,
+      createRunId,
+      render,
+      prepareText: async () => async () => ({ status: "sent" as const, chunks: 1 }),
+      prepareImage: async () => async () => ({ status: "sent" as const }),
+      deliver,
+    };
+
+    const first = sendFixedRunReportTest({ projectRoot: root, dependencies });
+    await firstStarted;
+    await expect(
+      sendFixedRunReportTest({ projectRoot: root, dependencies }),
+    ).rejects.toBeInstanceOf(ObserverTaskBusyError);
+    expect(createRunId).toHaveBeenCalledOnce();
+    expect(render).toHaveBeenCalledOnce();
+    expect(deliver).toHaveBeenCalledOnce();
+    finishFirst();
+    await expect(first).resolves.toMatchObject({ status: "sent" });
+  });
+
+  it("releases an injected lifecycle lock after failure", async () => {
+    const root = project();
+    const release = vi.fn(async () => undefined);
+    const acquireTaskLock = vi.fn(async () => ({ release }));
+
+    await expect(
+      sendFixedRunReportTest({
+        projectRoot: root,
+        dependencies: {
+          now: () => NOW,
+          createRunId: () => FIRST_ID,
+          render: ({ report }) => artifact(root, report),
+          acquireTaskLock,
+          prepareText: async () => {
+            throw new Error("sender preparation failed");
+          },
+        },
+      }),
+    ).rejects.toThrow("sender preparation failed");
+    expect(acquireTaskLock).toHaveBeenCalledWith({
+      projectRoot: root,
+      taskId: "codex-wechat-observer-test",
+    });
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("releases the real fixed lock after an exception", async () => {
+    const root = project();
+    await expect(
+      sendFixedRunReportTest({
+        projectRoot: root,
+        dependencies: {
+          now: () => NOW,
+          createRunId: () => FIRST_ID,
+          render: ({ report }) => artifact(root, report),
+          prepareText: async () => {
+            throw new Error("sender preparation failed");
+          },
+        },
+      }),
+    ).rejects.toThrow("sender preparation failed");
+
+    const next = await acquireObserverTaskLock({
+      projectRoot: root,
+      taskId: "codex-wechat-observer-test",
+    });
+    await next.release();
+  });
+
+  it("uses a lock independent from the live daily observer job", async () => {
+    const root = project();
+    const daily = await acquireObserverTaskLock({
+      projectRoot: root,
+      taskId: "daily-tech-digest",
+    });
+    try {
+      await expect(
+        sendFixedRunReportTest({
+          projectRoot: root,
+          dependencies: {
+            now: () => NOW,
+            createRunId: () => FIRST_ID,
+            render: ({ report }) => artifact(root, report),
+            prepareText: async () => async () => ({ status: "sent", chunks: 1 }),
+            prepareImage: async () => async () => ({ status: "sent" }),
+          },
+        }),
+      ).resolves.toMatchObject({ status: "sent" });
+    } finally {
+      await daily.release();
+    }
+  });
+
+  it("emits a stable safe CLI error when the test-card lock is busy", async () => {
+    const stdout = vi.fn();
+    const stderr = vi.fn();
+    await expect(
+      runSendRunReportTestCli([], { stdout, stderr }, {
+        send: async () => {
+          throw new ObserverTaskBusyError();
+        },
+      }),
+    ).resolves.toBe(1);
+
+    expect(stdout).not.toHaveBeenCalled();
+    expect(stderr).toHaveBeenCalledWith(
+      `${JSON.stringify({
+        error: "ObserverTaskBusyError",
+        message: "inspect project logs",
+      })}\n`,
+    );
+  });
+
   it("retries an explicitly rejected report with the same run and image", async () => {
     const root = project();
     const createRunId = vi

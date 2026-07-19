@@ -42,6 +42,12 @@ import {
   resolveProjectPath,
 } from "../lib/paths.js";
 import { shanghaiDateKey } from "../lib/time.js";
+import {
+  acquireObserverTaskLock,
+  ObserverTaskBusyError,
+  type AcquireObserverTaskLockOptions,
+  type ObserverTaskLock,
+} from "../observer/task-lock.js";
 
 const TEST_TASK_ID = "codex-wechat-observer-test";
 const TEST_TASK_NAME = "Codex 微信值守员测试";
@@ -88,6 +94,9 @@ export interface SendRunReportTestDependencies {
     readonly projectRoot: string;
     readonly report: RunReport;
   }) => RunDeliveryDisposition;
+  readonly acquireTaskLock?: (
+    options: AcquireObserverTaskLockOptions,
+  ) => Promise<ObserverTaskLock>;
 }
 
 export interface SendRunReportTestCliIo {
@@ -315,7 +324,7 @@ async function createCheckpoint(options: {
   return checkpoint;
 }
 
-export async function sendFixedRunReportTest(options: {
+async function sendFixedRunReportTestWhileLocked(options: {
   readonly projectRoot: string;
   readonly dependencies?: SendRunReportTestDependencies;
 }): Promise<DeliverRunReportResult> {
@@ -366,6 +375,24 @@ export async function sendFixedRunReportTest(options: {
   });
 }
 
+export async function sendFixedRunReportTest(options: {
+  readonly projectRoot: string;
+  readonly dependencies?: SendRunReportTestDependencies;
+}): Promise<DeliverRunReportResult> {
+  const dependencies = options.dependencies ?? {};
+  const lock = await (
+    dependencies.acquireTaskLock ?? acquireObserverTaskLock
+  )({
+    projectRoot: options.projectRoot,
+    taskId: TEST_TASK_ID,
+  });
+  try {
+    return await sendFixedRunReportTestWhileLocked(options);
+  } finally {
+    await lock.release();
+  }
+}
+
 function projectRootFromArguments(arguments_: readonly string[]): string {
   if (arguments_.length === 0) {
     return resolve(process.cwd());
@@ -406,6 +433,8 @@ export async function runSendRunReportTestCli(
         error:
           error instanceof SendRunReportTestUsageError
             ? error.name
+            : error instanceof ObserverTaskBusyError
+              ? error.name
             : "SendRunReportTestError",
         message: "inspect project logs",
       })}\n`,
