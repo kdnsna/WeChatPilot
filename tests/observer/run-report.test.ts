@@ -171,6 +171,21 @@ describe("sanitizeReportText", () => {
     ).toBe("failed at [LOCAL_PATH]; keep status.");
   });
 
+  it("uses only boundary-adjacent quotes to close a quoted home path", () => {
+    expect(
+      sanitizeReportText(
+        "failed at '/Users/alice/O'Brien/file.txt'. Continue.",
+        options,
+      ),
+    ).toBe("failed at '[LOCAL_PATH]'. Continue.");
+    expect(
+      sanitizeReportText(
+        'failed at "/home/bob/Team"Blue"/file.txt". Continue.',
+        options,
+      ),
+    ).toBe('failed at "[LOCAL_PATH]". Continue.');
+  });
+
   it("replaces URL-shaped text after path handling", () => {
     expect(
       sanitizeReportText(
@@ -303,6 +318,31 @@ describe("buildRunReport", () => {
     ]);
     const serialized = JSON.stringify(report);
     for (const fragment of ["alice", "O'Brien", "bob", 'Team"Blue"']) {
+      expect(serialized.includes(fragment)).toBe(false);
+    }
+  });
+
+  it("does not retain nested-quote path tails in a built report", () => {
+    const report = buildRunReport({
+      authority,
+      projectRoot: "/opt/example/private-project",
+      draft: {
+        version: 1,
+        summary: [
+          "mac '/Users/alice/O'Brien/file.txt'. Continue.",
+          'linux "/home/bob/Team"Blue"/file.txt". Continue.',
+        ],
+        metrics: [],
+        artifacts: [],
+      },
+    });
+
+    expect(report.summary).toEqual([
+      "mac '[LOCAL_PATH]'. Continue.",
+      'linux "[LOCAL_PATH]". Continue.',
+    ]);
+    const serialized = JSON.stringify(report);
+    for (const fragment of ["alice", "Brien/file.txt", "bob", 'Blue"/file.txt']) {
       expect(serialized.includes(fragment)).toBe(false);
     }
   });

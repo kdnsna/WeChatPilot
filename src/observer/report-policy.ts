@@ -20,8 +20,10 @@ export interface SanitizeReportTextOptions {
 
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
 const BIDI_CONTROL_CHARACTERS = /[\u202a-\u202e\u2066-\u2069]/gu;
-const DOUBLE_QUOTED_HOME_PATH = /"\/(?:Users|home)\/[^"\r\n]+"/gu;
-const SINGLE_QUOTED_HOME_PATH = /'\/(?:Users|home)\/[^'\r\n]+'/gu;
+const DOUBLE_QUOTED_HOME_PATH =
+  /"\/(?:Users|home)\/[^\r\n]+?"(?=[.!?,;:。！？；，)\]}]|\s|$)/gu;
+const SINGLE_QUOTED_HOME_PATH =
+  /'\/(?:Users|home)\/[^\r\n]+?'(?=[.!?,;:。！？；，)\]}]|\s|$)/gu;
 const UNQUOTED_HOME_PATH =
   /\/(?:Users|home)\/[^\r\n<>]+?(?=\s+\/(?:Users|home)\/|[。！？；，]|[.!?,;:](?=\s|$)|[\])}](?=\s|$)|$)/gu;
 const URL_TEXT = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/giu;
