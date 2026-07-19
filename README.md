@@ -2,7 +2,7 @@
 
 这是一个运行在本机 macOS 上的 Node.js 22 / TypeScript 项目。它每天收集过去 24 小时的技术信号，用透明指标完成归一化、聚类、排序和七日去重，再通过受限的 `codex exec` 生成中文日报，最后单向推送到扫码绑定的微信 Chatbot。
 
-项目不会从微信执行命令，不会启动 `cli-in-wechat` 的 Router、Codex 适配器或远程控制入口，也不会使用 `--dangerously-bypass-approvals-and-sandbox`。微信凭据和 context token 只保存在本项目被 Git 忽略的 `.state/wechat/`，目录权限为 `0700`、文件权限为 `0600`；命令输出和日志只报告就绪状态，不显示具体值、用户 ID 或令牌。
+项目不会从微信执行命令，不会启动 `cli-in-wechat` 的 Router、Codex 适配器或远程控制入口，也不会使用 `--dangerously-bypass-approvals-and-sandbox`。微信不能启动、批准、恢复、停止或修改 Codex 任务；它在本项目中始终只是单向投递终点。微信凭据和 context token 只保存在本项目被 Git 忽略的 `.state/wechat/`，目录权限为 `0700`、文件权限为 `0600`；命令输出和日志只报告就绪状态，不显示具体值、用户 ID 或令牌。
 
 ## 运行环境
 
@@ -33,6 +33,8 @@ cd '/Users/kdnsna/Documents/微信 chat'
 ```sh
 ./scripts/health-check.sh
 ```
+
+输出中的 `observer` 只有配置/渲染器就绪布尔值以及待恢复、待发送、不确定投递、无效状态记录的安全计数，不包含 run ID 或路径。待处理计数会把整体状态标为 `pending`，不代表必需环境损坏；无效配置、渲染器不可用或无效状态记录则返回 `failed`。若微信登录过期，重新运行 `./scripts/init-wechat.sh` 扫码初始化，不要手工编辑私有状态文件。
 
 只准备 Codex 输入、检查安全参数而不调用 Codex：
 
@@ -69,6 +71,14 @@ GitHub Token 是可选项；不设置时使用公开 API 降级运行。若临�
 ```sh
 ./scripts/send-test.sh
 ```
+
+显式发送一张固定值守员测试卡（会真实向已绑定本人微信发送文字和 PNG）：
+
+```sh
+./scripts/send-run-report-test.sh
+```
+
+测试卡没有收件人、命令、附件或消息覆盖参数。报告内容与 PNG 卡片由本地确定性模板渲染，不由 AI 生成。
 
 发送指定日期的完整日报：
 
@@ -189,7 +199,9 @@ PATH=/opt/homebrew/opt/node@22/bin:/usr/bin:/bin \
 ./scripts/run-scheduled.sh
 ```
 
-当前 **尚未加载** LaunchAgent。安装脚本必须收到显式确认参数，否则退出且不改动 LaunchAgent：
+该脚本现在由 Observer 启动受审计的 `daily-tech-digest` 任务：日报投递完成后，再发送对应的文字运行报告和 PNG 卡片。如果上次 Observer 在任务运行期间被主机或进程中断，`interrupted` 报告只会在下一次 Observer 成功启动并完成恢复检查后上报。投递状态为 `indeterminate` 时永不自动重放，必须由运维人员核查，避免向微信重复发送。
+
+安装脚本必须收到显式确认参数，否则退出且不改动 LaunchAgent：
 
 ```sh
 ./scripts/install-launchd.sh --confirm-load
@@ -202,7 +214,7 @@ PATH=/opt/homebrew/opt/node@22/bin:/usr/bin:/bin \
 ./scripts/health-check.sh
 ```
 
-卸载只停止任务并删除用户 `LaunchAgents` 中这一份精确 plist，不删除项目、日报、日志或微信状态：
+要停用已存在的 LaunchAgent，使用专用卸载脚本。它只停止任务并删除用户 `LaunchAgents` 中这一份精确 plist，不删除项目、日报、日志或微信状态：
 
 ```sh
 ./scripts/uninstall-launchd.sh

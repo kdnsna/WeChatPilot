@@ -8,9 +8,11 @@
   <key>ProgramArguments</key>
   <array>
     <string>/opt/homebrew/opt/node@22/bin/node</string>
-    <string>/Users/kdnsna/Documents/微信 chat/dist/src/cli/scheduled.js</string>
+    <string>/Users/kdnsna/Documents/微信 chat/dist/src/cli/observer.js</string>
     <string>--project-root</string>
     <string>/Users/kdnsna/Documents/微信 chat</string>
+    <string>--job</string>
+    <string>daily-tech-digest</string>
   </array>
 
   <key>WorkingDirectory</key>

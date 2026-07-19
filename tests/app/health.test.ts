@@ -12,10 +12,30 @@ import {
   type ProjectHealthReport,
 } from "../../src/app/health.js";
 import { runHealthCli } from "../../src/cli/health.js";
+import type { ObserverConfig } from "../../src/observer/config.js";
 
 const roots: string[] = [];
 const NODE_EXECUTABLE = "/approved/node-22";
 const CODEX_ENTRYPOINT = "/approved/codex.js";
+
+const OBSERVER_CONFIG: ObserverConfig = {
+  version: 1,
+  jobs: [
+    {
+      id: "daily-tech-digest",
+      name: "每日科技情报",
+      projectLabel: "WeChatPilot",
+      executable: "/opt/homebrew/opt/node@22/bin/node",
+      entrypoint: "dist/src/cli/scheduled.js",
+      arguments: ["--project-root", "{projectRoot}"],
+      workingDirectory: ".",
+      timeoutMs: 1_000,
+      resultAdapter: "scheduled-digest-json-v1",
+      allowedArtifactRoot: "output",
+      notify: "always",
+    },
+  ],
+};
 
 function project(): string {
   const root = mkdtempSync(join(tmpdir(), "digest-health-"));
@@ -50,6 +70,15 @@ function healthyProbes(
       credentialsReady: false,
       ownerBound: false,
       contextReady: false,
+    }),
+    loadObserverConfig: () => OBSERVER_CONFIG,
+    rendererReady: () => true,
+    inspectRunState: () => ({ recoveryPending: 0, invalidRecords: 0 }),
+    listFinalRunReports: () => [],
+    inspectRunDeliveryState: () => ({
+      pending: 0,
+      indeterminate: 0,
+      invalid: 0,
     }),
     ...overrides,
   };
@@ -135,6 +164,15 @@ describe("project health", () => {
         credentialsReady: false,
         ownerBound: false,
         contextReady: false,
+      },
+      observer: {
+        status: "ok",
+        configValid: true,
+        rendererReady: true,
+        pendingRecoveryReports: 0,
+        pendingDeliveries: 0,
+        indeterminateDeliveries: 0,
+        invalidStateRecords: 0,
       },
       diagnostics: [],
     });
@@ -263,6 +301,94 @@ describe("project health", () => {
     expect(report.requiredReady).toBe(true);
     expect(report.wechat.status).toBe("pending");
     expect(healthExitCode(report)).toBe(0);
+  });
+
+  it("reports only safe observer counts and marks pending work for operator review", () => {
+    const root = project();
+    const secretRunId = "019c7714-3b77-74d1-9866-e1f484aae2ab";
+    const report = inspectProjectHealth({
+      projectRoot: root,
+      probes: healthyProbes({
+        wechatHealth: () => ({
+          credentialsReady: true,
+          ownerBound: true,
+          contextReady: true,
+        }),
+        inspectRunState: () => ({ recoveryPending: 2, invalidRecords: 0 }),
+        listFinalRunReports: () => [
+          {
+            runId: secretRunId,
+          } as never,
+        ],
+        inspectRunDeliveryState: ({ reports }) => {
+          expect(reports).toHaveLength(1);
+          return { pending: 3, indeterminate: 4, invalid: 0 };
+        },
+      }),
+    });
+
+    expect(report.status).toBe("pending");
+    expect(report.requiredReady).toBe(true);
+    expect(report.observer).toEqual({
+      status: "ok",
+      configValid: true,
+      rendererReady: true,
+      pendingRecoveryReports: 2,
+      pendingDeliveries: 3,
+      indeterminateDeliveries: 4,
+      invalidStateRecords: 0,
+    });
+    expect(report.diagnostics).toEqual([
+      "observer recovery pending",
+      "observer delivery pending",
+      "observer delivery requires review",
+    ]);
+    const serialized = JSON.stringify(report);
+    expect(serialized).not.toContain(secretRunId);
+    expect(serialized).not.toContain(root);
+    expect(healthExitCode(report)).toBe(0);
+  });
+
+  it.each([
+    {
+      name: "missing observer configuration",
+      override: {
+        loadObserverConfig: () => {
+          throw new Error("missing /private/config/observer-jobs.yaml");
+        },
+      },
+      expected: { configValid: false, rendererReady: true, invalidStateRecords: 0 },
+    },
+    {
+      name: "unavailable report renderer",
+      override: { rendererReady: () => false },
+      expected: { configValid: true, rendererReady: false, invalidStateRecords: 0 },
+    },
+    {
+      name: "invalid observer state records",
+      override: {
+        inspectRunState: () => ({ recoveryPending: 0, invalidRecords: 2 }),
+        inspectRunDeliveryState: () => ({ pending: 0, indeterminate: 0, invalid: 3 }),
+      },
+      expected: { configValid: true, rendererReady: true, invalidStateRecords: 5 },
+    },
+  ])("fails required readiness for $name", ({ override, expected }) => {
+    const report = inspectProjectHealth({
+      projectRoot: project(),
+      probes: healthyProbes({
+        wechatHealth: () => ({
+          credentialsReady: true,
+          ownerBound: true,
+          contextReady: true,
+        }),
+        ...override,
+      }),
+    });
+
+    expect(report.status).toBe("failed");
+    expect(report.requiredReady).toBe(false);
+    expect(report.observer).toMatchObject({ status: "failed", ...expected });
+    expect(healthExitCode(report)).toBe(1);
   });
 
   it("writes pending health to stdout and required failures to stderr", () => {
