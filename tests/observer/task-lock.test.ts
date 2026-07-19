@@ -60,6 +60,74 @@ afterEach(() => {
 });
 
 describe("observer task lock", () => {
+  it("safely initializes both locks from a clean checkout state directory", async () => {
+    const root = project();
+    const state = join(root, ".state");
+    const locks = join(state, "locks");
+    mkdirSync(state, { mode: 0o755 });
+    chmodSync(state, 0o755);
+    writeFileSync(join(state, ".gitkeep"), "", "utf8");
+
+    const daily = await acquireObserverTaskLock({
+      projectRoot: root,
+      taskId: "daily-tech-digest",
+    });
+    const testCard = await acquireObserverTaskLock({
+      projectRoot: root,
+      taskId: "codex-wechat-observer-test",
+    });
+
+    expect(statSync(state).mode & 0o777).toBe(0o700);
+    expect(statSync(locks).mode & 0o777).toBe(0o700);
+    expect(readdirSync(locks).sort()).toEqual([
+      "observer-codex-wechat-observer-test.lock",
+      "observer-daily-tech-digest.lock",
+    ]);
+    await testCard.release();
+    await daily.release();
+    expect(readdirSync(locks)).toEqual([]);
+    expect(readFileSync(join(state, ".gitkeep"), "utf8")).toBe("");
+  });
+
+  it("rejects existing symlink and non-directory lock paths", async () => {
+    for (const kind of [
+      "state-file",
+      "state-symlink",
+      "locks-file",
+      "locks-symlink",
+    ] as const) {
+      const root = project();
+      const state = join(root, ".state");
+      const locks = join(state, "locks");
+      if (kind === "state-file") {
+        writeFileSync(state, "not a directory", "utf8");
+      } else if (kind === "state-symlink") {
+        const target = join(root, "state-target");
+        mkdirSync(target);
+        symlinkSync(target, state);
+      } else {
+        mkdirSync(state, { mode: 0o700 });
+        chmodSync(state, 0o700);
+        if (kind === "locks-file") {
+          writeFileSync(locks, "not a directory", "utf8");
+        } else {
+          const target = join(root, "locks-target");
+          mkdirSync(target);
+          symlinkSync(target, locks);
+        }
+      }
+
+      for (const taskId of [
+        "daily-tech-digest",
+        "codex-wechat-observer-test",
+      ] as const) {
+        await expect(
+          acquireObserverTaskLock({ projectRoot: root, taskId }),
+        ).rejects.toBeInstanceOf(ObserverTaskBusyError);
+      }
+    }
+  });
+
   it("allows exactly the daily and fixed test-card locks to coexist", async () => {
     const root = project();
     const daily = await acquireObserverTaskLock({

@@ -151,14 +151,46 @@ function createPrivateLocksDirectory(projectRoot: string): string {
         chmodSync(directory, PRIVATE_DIRECTORY_MODE);
       }
 
-      const hardenedMetadata = lstatSync(directory);
-      if (
-        hardenedMetadata.isSymbolicLink() ||
-        !hardenedMetadata.isDirectory() ||
-        (hardenedMetadata.mode & 0o777) !== PRIVATE_DIRECTORY_MODE ||
-        !sameIdentity(hardenedMetadata, identity)
-      ) {
-        throw new ObserverTaskBusyError();
+      let descriptor: number | undefined;
+      try {
+        descriptor = openSync(
+          directory,
+          constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+        );
+        const openedMetadata = fstatSync(descriptor);
+        if (
+          !openedMetadata.isDirectory() ||
+          !sameIdentity(openedMetadata, identity)
+        ) {
+          throw new ObserverTaskBusyError();
+        }
+
+        fchmodSync(descriptor, PRIVATE_DIRECTORY_MODE);
+        const hardenedDescriptorMetadata = fstatSync(descriptor);
+        if (
+          !hardenedDescriptorMetadata.isDirectory() ||
+          (hardenedDescriptorMetadata.mode & 0o777) !==
+            PRIVATE_DIRECTORY_MODE ||
+          !sameIdentity(hardenedDescriptorMetadata, identity)
+        ) {
+          throw new ObserverTaskBusyError();
+        }
+
+        const hardenedPathMetadata = lstatSync(
+          assertNoSymlinkComponents(projectRoot, directory),
+        );
+        if (
+          hardenedPathMetadata.isSymbolicLink() ||
+          !hardenedPathMetadata.isDirectory() ||
+          (hardenedPathMetadata.mode & 0o777) !== PRIVATE_DIRECTORY_MODE ||
+          !sameIdentity(hardenedPathMetadata, identity)
+        ) {
+          throw new ObserverTaskBusyError();
+        }
+      } finally {
+        if (descriptor !== undefined) {
+          closeSync(descriptor);
+        }
       }
       lockDirectory = directory;
     }
