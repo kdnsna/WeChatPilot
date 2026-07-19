@@ -81,7 +81,7 @@ export function sanitizeReportText(
     return null;
   }
 
-  const controlsRemoved = redacted
+  const controlsRemoved = value
     .replace(CONTROL_CHARACTERS, "")
     .replace(BIDI_CONTROL_CHARACTERS, "");
   const closureRedacted = redactSecrets(controlsRemoved);

@@ -123,6 +123,23 @@ describe("sanitizeReportText", () => {
     expect(result).toBe("token=[REDACTED]");
   });
 
+  it("redacts complete reconstructed tokens instead of leaving partial tails", () => {
+    const probes = [
+      `ghp_${"a".repeat(24)}\n${"b".repeat(12)}`,
+      `github_pat_${"c".repeat(20)}\u0000${"d".repeat(12)}`,
+      `sk-${"e".repeat(20)}\r${"f".repeat(12)}`,
+      `sk-${"g".repeat(20)}\u202e${"h".repeat(12)}`,
+    ] as const;
+
+    for (const value of probes) {
+      const result = sanitizeReportText(value, options);
+      expect(result).toBe("[REDACTED]");
+      expect(result === null ? null : sanitizeReportText(result, options)).toBe(
+        result,
+      );
+    }
+  });
+
   it("deletes C0, C1, and bidi controls while retaining ordinary spaces", () => {
     expect(
       sanitizeReportText(
@@ -453,6 +470,41 @@ describe("buildRunReport", () => {
 
     expect(JSON.stringify(report).includes(privateMarker)).toBe(false);
     expect(report.summary).toEqual(["token=[REDACTED]"]);
+  });
+
+  it("does not retain partial token tails in a built report", () => {
+    const report = buildRunReport({
+      authority,
+      projectRoot: "/opt/example/private-project",
+      draft: {
+        version: 1,
+        summary: [
+          `ghp ghp_${"a".repeat(24)}\n${"b".repeat(12)}`,
+          `github github_pat_${"c".repeat(20)}\u0000${"d".repeat(12)}`,
+          `sk sk-${"e".repeat(20)}\r${"f".repeat(12)}`,
+          `bidi sk-${"g".repeat(20)}\u202e${"h".repeat(12)}`,
+        ],
+        metrics: [],
+        artifacts: [],
+      },
+    });
+
+    expect(report.summary).toEqual([
+      "ghp [REDACTED]",
+      "github [REDACTED]",
+      "sk [REDACTED]",
+      "bidi [REDACTED]",
+    ]);
+    expect(RunReportSchema.parse(report)).toEqual(report);
+    const serialized = JSON.stringify(report);
+    for (const tail of [
+      "b".repeat(12),
+      "d".repeat(12),
+      "f".repeat(12),
+      "h".repeat(12),
+    ]) {
+      expect(serialized.includes(tail)).toBe(false);
+    }
   });
 
   it("closes exact and reconstructed paths in a schema-valid built report", () => {
