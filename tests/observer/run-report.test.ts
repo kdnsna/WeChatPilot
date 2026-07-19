@@ -138,7 +138,7 @@ describe("sanitizeReportText", () => {
         "/Users/example/private-project /Users/alice/work/file /home/bob/app/file",
         options,
       ),
-    ).toBe("[LOCAL_PATH] [LOCAL_PATH] [LOCAL_PATH]");
+    ).toBe("[LOCAL_PATH] [LOCAL_PATH]");
   });
 
   it("fails closed for quoted paths and bounds unquoted paths", () => {
@@ -153,7 +153,7 @@ describe("sanitizeReportText", () => {
         "failed at /home/bob/My Project/private/db.sqlite. Retry later.",
         options,
       ),
-    ).toBe("failed at [LOCAL_PATH]. Retry later.");
+    ).toBe("failed at [LOCAL_PATH]");
   });
 
   it("redacts unquoted home paths containing legal quote characters", () => {
@@ -162,13 +162,13 @@ describe("sanitizeReportText", () => {
         "failed at /Users/alice/O'Brien/file.txt. Continue.",
         options,
       ),
-    ).toBe("failed at [LOCAL_PATH]. Continue.");
+    ).toBe("failed at [LOCAL_PATH]");
     expect(
       sanitizeReportText(
         'failed at /home/bob/Team"Blue"/file.txt; keep status.',
         options,
       ),
-    ).toBe("failed at [LOCAL_PATH]; keep status.");
+    ).toBe("failed at [LOCAL_PATH]");
   });
 
   it("fails closed for quoted paths containing same-kind inner quotes", () => {
@@ -237,6 +237,33 @@ describe("sanitizeReportText", () => {
 
     expect(result).toBe("first [LOCAL_PATH]下一行保留");
     expect(result?.includes("hidden")).toBe(false);
+  });
+
+  it("fails closed for angle-delimited and angle-bearing home paths", () => {
+    expect(
+      sanitizeReportText(
+        "see </Users/alice/private/file.txt> now",
+        options,
+      ),
+    ).toBe("see <[LOCAL_PATH]");
+    expect(
+      sanitizeReportText("/home/bob/Team<Blue>/file.txt", options),
+    ).toBe("[LOCAL_PATH]");
+  });
+
+  it("fails closed only through an unquoted home path's current line", () => {
+    expect(
+      sanitizeReportText(
+        "first /Users/alice/private/file.txt hidden\n下一行保留",
+        options,
+      ),
+    ).toBe("first [LOCAL_PATH]下一行保留");
+  });
+
+  it("leaves ordinary text without a home prefix unchanged", () => {
+    expect(sanitizeReportText("ordinary <value> remains", options)).toBe(
+      "ordinary <value> remains",
+    );
   });
 
   it("replaces URL-shaped text after path handling", () => {
@@ -366,11 +393,36 @@ describe("buildRunReport", () => {
     });
 
     expect(report.summary).toEqual([
-      "mac [LOCAL_PATH]. Continue.",
-      "linux [LOCAL_PATH]; keep status.",
+      "mac [LOCAL_PATH]",
+      "linux [LOCAL_PATH]",
     ]);
     const serialized = JSON.stringify(report);
     for (const fragment of ["alice", "O'Brien", "bob", 'Team"Blue"']) {
+      expect(serialized.includes(fragment)).toBe(false);
+    }
+  });
+
+  it("does not retain angle-delimited or angle-bearing path tails", () => {
+    const report = buildRunReport({
+      authority,
+      projectRoot: "/opt/example/private-project",
+      draft: {
+        version: 1,
+        summary: [
+          "angle see </Users/alice/private/file.txt> now",
+          "internal /home/bob/Team<Blue>/file.txt",
+        ],
+        metrics: [],
+        artifacts: [],
+      },
+    });
+
+    expect(report.summary).toEqual([
+      "angle see <[LOCAL_PATH]",
+      "internal [LOCAL_PATH]",
+    ]);
+    const serialized = JSON.stringify(report);
+    for (const fragment of ["alice", "bob", "Blue", "file.txt"]) {
       expect(serialized.includes(fragment)).toBe(false);
     }
   });

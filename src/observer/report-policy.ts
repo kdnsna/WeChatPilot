@@ -20,49 +20,41 @@ export interface SanitizeReportTextOptions {
 
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
 const BIDI_CONTROL_CHARACTERS = /[\u202a-\u202e\u2066-\u2069]/gu;
-const UNQUOTED_HOME_PATH =
-  /\/(?:Users|home)\/[^\r\n<>]+?(?=\s+\/(?:Users|home)\/|[。！？；，]|[.!?,;:](?=\s|$)|[\])}](?=\s|$)|$)/gu;
 const URL_TEXT = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/giu;
 
-function findQuotedHomeOpening(line: string): number | null {
-  for (let index = 0; index < line.length; index += 1) {
-    const quote = line[index];
-    if (quote !== "'" && quote !== '"') {
-      continue;
-    }
-    if (
-      line.startsWith("/Users/", index + 1) ||
-      line.startsWith("/home/", index + 1)
-    ) {
-      return index;
-    }
+function findHomePrefix(line: string): number | null {
+  const macosIndex = line.indexOf("/Users/");
+  const linuxIndex = line.indexOf("/home/");
+  if (macosIndex < 0) {
+    return linuxIndex < 0 ? null : linuxIndex;
   }
-  return null;
+  if (linuxIndex < 0) {
+    return macosIndex;
+  }
+  return Math.min(macosIndex, linuxIndex);
 }
 
-function redactQuotedHomePathsInLine(line: string): string {
-  const openingIndex = findQuotedHomeOpening(line);
-  if (openingIndex === null) {
+function redactHomePathsInLine(line: string): string {
+  const prefixIndex = findHomePrefix(line);
+  if (prefixIndex === null) {
     return line;
   }
 
-  // Unescaped POSIX names make closing quotes indistinguishable from path data.
-  // Fail closed through this line so an ambiguous path tail can never leak.
-  return `${line.slice(0, openingIndex)}[LOCAL_PATH]`;
-}
-
-function redactQuotedHomePaths(value: string): string {
-  return value
-    .split(/(\r\n|\r|\n)/u)
-    .map((line) => redactQuotedHomePathsInLine(line))
-    .join("");
+  // POSIX filenames make path boundaries in free text impossible to prove.
+  // Fail closed from the first home prefix through this line.
+  const precedingCharacter = line[prefixIndex - 1];
+  const replacementIndex =
+    precedingCharacter === "'" || precedingCharacter === '"'
+      ? prefixIndex - 1
+      : prefixIndex;
+  return `${line.slice(0, replacementIndex)}[LOCAL_PATH]`;
 }
 
 function redactHomePaths(value: string): string {
-  return redactQuotedHomePaths(value).replace(
-    UNQUOTED_HOME_PATH,
-    "[LOCAL_PATH]",
-  );
+  return value
+    .split(/(\r\n|\r|\n)/u)
+    .map((line) => redactHomePathsInLine(line))
+    .join("");
 }
 
 export function sanitizeReportText(
