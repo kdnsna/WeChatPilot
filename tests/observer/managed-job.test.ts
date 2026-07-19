@@ -298,18 +298,26 @@ describe("runManagedJob", () => {
     expect(JSON.stringify(outcome)).not.toContain(privateMarker);
   });
 
-  it("sends KILL only after two seconds when timeout or abort does not exit", async () => {
+  it("keeps the outcome and task lock pending after KILL until exit or close", async () => {
     vi.useFakeTimers();
     for (const reason of ["timeout", "abort"] as const) {
       const root = project();
       const child = new FakeChild();
       const spawn = vi.fn(() => child);
       const controller = new AbortController();
+      const release = vi.fn(async () => undefined);
       const promise = runManagedJob({
         projectRoot: root,
         job,
         signal: controller.signal,
-        dependencies: dependencies(spawn as NonNullable<ManagedJobDependencies["spawn"]>),
+        dependencies: dependencies(
+          spawn as NonNullable<ManagedJobDependencies["spawn"]>,
+          { acquireTaskLock: vi.fn(async () => ({ release })) },
+        ),
+      });
+      let settled = false;
+      void promise.then(() => {
+        settled = true;
       });
       await Promise.resolve();
       await Promise.resolve();
@@ -324,11 +332,26 @@ describe("runManagedJob", () => {
       expect(child.kill).not.toHaveBeenCalledWith("SIGKILL");
       await vi.advanceTimersByTimeAsync(1);
       expect(child.kill).toHaveBeenCalledWith("SIGKILL");
-      child.emit("exit", null, "SIGKILL");
-      child.emit("close", null, "SIGKILL");
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      expect(release).not.toHaveBeenCalled();
+
+      if (reason === "timeout") {
+        child.emit("exit", null, "SIGKILL");
+      } else {
+        child.emit("close", null, "SIGKILL");
+      }
       await expect(promise).resolves.toMatchObject({
         authority: { status: reason === "timeout" ? "timed-out" : "cancelled" },
       });
+      expect(settled).toBe(true);
+      expect(release).toHaveBeenCalledOnce();
+      expect(child.listenerCount("spawn")).toBe(0);
+      expect(child.listenerCount("error")).toBe(0);
+      expect(child.listenerCount("exit")).toBe(0);
+      expect(child.listenerCount("close")).toBe(0);
+      expect(child.stdout.listenerCount("data")).toBe(0);
+      expect(child.stderr.listenerCount("data")).toBe(0);
     }
   });
 

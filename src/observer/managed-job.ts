@@ -352,7 +352,6 @@ export async function runManagedJob(
         forceKillTimer = dependencies.setTimeout(() => {
           if (!settled && !exited && terminalIntent !== undefined) {
             child.kill("SIGKILL");
-            finish(terminalIntent.status, failureDraft(terminalIntent.kind));
           }
         }, FORCE_KILL_DELAY_MS);
       };
@@ -422,6 +421,9 @@ export async function runManagedJob(
         if (forceKillTimer !== undefined) {
           dependencies.clearTimeout(forceKillTimer);
           forceKillTimer = undefined;
+        }
+        if (terminalIntent !== undefined) {
+          finish(terminalIntent.status, failureDraft(terminalIntent.kind));
         }
       }
 

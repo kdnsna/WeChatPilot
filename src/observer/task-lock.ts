@@ -4,6 +4,7 @@ import {
   constants,
   fstatSync,
   fsyncSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -55,6 +56,12 @@ export interface AcquireObserverTaskLockOptions {
   readonly pid?: number;
   readonly isProcessAlive?: (pid: number) => boolean;
   readonly now?: () => Date;
+  readonly dependencies?: TaskLockDependencies;
+}
+
+export interface TaskLockDependencies {
+  readonly writeFile?: (descriptor: number, content: string) => void;
+  readonly fsync?: (descriptor: number) => void;
 }
 
 function safeError(): Error {
@@ -113,7 +120,13 @@ function ensurePrivateLockDirectory(projectRoot: string): string {
 function readExistingLock(
   projectRoot: string,
   path: string,
-): { readonly record: LockRecord; readonly identity: LockIdentity } {
+):
+  | {
+      readonly kind: "valid";
+      readonly record: LockRecord;
+      readonly identity: LockIdentity;
+    }
+  | { readonly kind: "recoverable-invalid"; readonly identity: LockIdentity } {
   let descriptor: number | undefined;
   try {
     const pathMetadata = lstatSync(assertNoSymlinkComponents(projectRoot, path));
@@ -121,10 +134,13 @@ function readExistingLock(
       pathMetadata.isSymbolicLink() ||
       !pathMetadata.isFile() ||
       (pathMetadata.mode & 0o777) !== PRIVATE_FILE_MODE ||
-      pathMetadata.size <= 0 ||
       pathMetadata.size > MAXIMUM_LOCK_BYTES
     ) {
       throw new ObserverTaskBusyError();
+    }
+    const identity = { dev: pathMetadata.dev, ino: pathMetadata.ino };
+    if (pathMetadata.size === 0) {
+      return { kind: "recoverable-invalid", identity };
     }
     descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const descriptorMetadata = fstatSync(descriptor);
@@ -136,20 +152,27 @@ function readExistingLock(
     ) {
       throw new ObserverTaskBusyError();
     }
-    const parsed = LockRecordSchema.safeParse(
-      JSON.parse(readFileSync(descriptor, "utf8")) as unknown,
-    );
+    const content = readFileSync(descriptor, "utf8");
     const finalMetadata = fstatSync(descriptor);
     if (
-      !parsed.success ||
       finalMetadata.size !== descriptorMetadata.size ||
       !sameIdentity(finalMetadata, descriptorMetadata)
     ) {
       throw new ObserverTaskBusyError();
     }
+    let parsed: ReturnType<typeof LockRecordSchema.safeParse>;
+    try {
+      parsed = LockRecordSchema.safeParse(JSON.parse(content) as unknown);
+    } catch {
+      return { kind: "recoverable-invalid", identity };
+    }
+    if (!parsed.success) {
+      return { kind: "recoverable-invalid", identity };
+    }
     return {
+      kind: "valid",
       record: parsed.data,
-      identity: { dev: descriptorMetadata.dev, ino: descriptorMetadata.ino },
+      identity,
     };
   } catch (error) {
     if (error instanceof ObserverTaskBusyError) {
@@ -204,64 +227,115 @@ export async function acquireObserverTaskLock(
   ensurePrivateLockDirectory(options.projectRoot);
   const path = lockFilePath(options.projectRoot, taskId);
   const processAlive = options.isProcessAlive ?? processIsAlive;
+  const writeOwner =
+    options.dependencies?.writeFile ??
+    ((descriptor: number, content: string) =>
+      writeFileSync(descriptor, content, "utf8"));
+  const syncOwner = options.dependencies?.fsync ?? fsyncSync;
   const record: LockRecord = {
     pid,
     nonce: randomUUID(),
     createdAt: createdAt.toISOString(),
     taskId,
   };
-
+  const ownerPath = resolveProjectPath(
+    options.projectRoot,
+    ".state",
+    "locks",
+    `.observer-${taskId}.${pid}.${record.nonce}.owner`,
+  );
   let descriptor: number | undefined;
-  let identity: LockIdentity | undefined;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      descriptor = openSync(
-        path,
-        constants.O_CREAT |
-          constants.O_EXCL |
-          constants.O_WRONLY |
-          (constants.O_NOFOLLOW ?? 0),
-        PRIVATE_FILE_MODE,
-      );
-      const metadata = fstatSync(descriptor);
-      identity = { dev: metadata.dev, ino: metadata.ino };
-      writeFileSync(descriptor, `${JSON.stringify(record)}\n`, "utf8");
-      fsyncSync(descriptor);
-      break;
-    } catch (error) {
-      if (descriptor !== undefined) {
-        closeSync(descriptor);
-        descriptor = undefined;
-        if (identity !== undefined) {
-          removeIfSameRegularFile(options.projectRoot, path, identity);
-          identity = undefined;
-        }
-      }
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST" || attempt === 1) {
-        if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+  let ownerIdentity: LockIdentity | undefined;
+  let published = false;
+  try {
+    descriptor = openSync(
+      ownerPath,
+      constants.O_CREAT |
+        constants.O_EXCL |
+        constants.O_WRONLY |
+        (constants.O_NOFOLLOW ?? 0),
+      PRIVATE_FILE_MODE,
+    );
+    const metadata = fstatSync(descriptor);
+    if (!metadata.isFile() || (metadata.mode & 0o777) !== PRIVATE_FILE_MODE) {
+      throw safeError();
+    }
+    ownerIdentity = { dev: metadata.dev, ino: metadata.ino };
+    writeOwner(descriptor, `${JSON.stringify(record)}\n`);
+    syncOwner(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const ownerMetadata = lstatSync(ownerPath);
+        if (
+          !ownerMetadata.isFile() ||
+          ownerMetadata.isSymbolicLink() ||
+          !sameIdentity(ownerMetadata, ownerIdentity)
+        ) {
           throw new ObserverTaskBusyError();
         }
-        throw safeError();
+        linkSync(ownerPath, path);
+        published = true;
+        const canonicalMetadata = lstatSync(path);
+        if (
+          !canonicalMetadata.isFile() ||
+          canonicalMetadata.isSymbolicLink() ||
+          !sameIdentity(canonicalMetadata, ownerIdentity)
+        ) {
+          throw new ObserverTaskBusyError();
+        }
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+          if (error instanceof ObserverTaskBusyError) {
+            throw error;
+          }
+          throw safeError();
+        }
+        const existing = readExistingLock(options.projectRoot, path);
+        if (existing.kind === "valid") {
+          let alive = true;
+          try {
+            alive = processAlive(existing.record.pid);
+          } catch {
+            alive = true;
+          }
+          if (alive) {
+            throw new ObserverTaskBusyError();
+          }
+        }
+        if (!removeIfSameRegularFile(options.projectRoot, path, existing.identity)) {
+          throw new ObserverTaskBusyError();
+        }
       }
-      const existing = readExistingLock(options.projectRoot, path);
-      let alive = true;
+    }
+    if (!published) {
+      throw new ObserverTaskBusyError();
+    }
+  } catch (error) {
+    if (published && ownerIdentity !== undefined) {
+      removeIfSameRegularFile(options.projectRoot, path, ownerIdentity);
+    }
+    if (error instanceof ObserverTaskBusyError) {
+      throw error;
+    }
+    throw safeError();
+  } finally {
+    if (descriptor !== undefined) {
       try {
-        alive = processAlive(existing.record.pid);
+        closeSync(descriptor);
       } catch {
-        alive = true;
+        // Cleanup continues through the identity-checked owner unlink below.
       }
-      if (alive || !removeIfSameRegularFile(options.projectRoot, path, existing.identity)) {
-        throw new ObserverTaskBusyError();
-      }
+    }
+    if (ownerIdentity !== undefined) {
+      removeIfSameRegularFile(options.projectRoot, ownerPath, ownerIdentity);
     }
   }
 
-  if (descriptor === undefined || identity === undefined) {
-    throw new ObserverTaskBusyError();
-  }
-
-  const ownedDescriptor = descriptor;
-  const ownedIdentity = identity;
+  const ownedIdentity = ownerIdentity;
   let released = false;
   return {
     release: async () => {
@@ -269,7 +343,6 @@ export async function acquireObserverTaskLock(
         return;
       }
       released = true;
-      closeSync(ownedDescriptor);
       removeIfSameRegularFile(options.projectRoot, path, ownedIdentity);
     },
   };

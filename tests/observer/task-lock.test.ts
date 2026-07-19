@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -112,6 +113,56 @@ describe("observer task lock", () => {
     expect(winners).toHaveLength(1);
     expect(settled.filter((result) => result.status === "rejected")).toHaveLength(1);
     await winners[0]!.release();
+  });
+
+  it("recovers a zero-byte crash residue with at most one concurrent winner", async () => {
+    const root = project();
+    const directory = join(root, ".state", "locks");
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    chmodSync(join(root, ".state"), 0o700);
+    chmodSync(directory, 0o700);
+    writeFileSync(lockPath(root), "", { mode: 0o600 });
+
+    const settled = await Promise.allSettled([
+      acquireObserverTaskLock({
+        projectRoot: root,
+        taskId: "daily-tech-digest",
+        pid: 22_222,
+        isProcessAlive: (pid) => pid === 22_222 || pid === 33_333,
+      }),
+      acquireObserverTaskLock({
+        projectRoot: root,
+        taskId: "daily-tech-digest",
+        pid: 33_333,
+        isProcessAlive: (pid) => pid === 22_222 || pid === 33_333,
+      }),
+    ]);
+
+    const winners = settled.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
+    );
+    expect(winners).toHaveLength(1);
+    expect(settled.filter((result) => result.status === "rejected")).toHaveLength(1);
+    await winners[0]!.release();
+  });
+
+  it("leaves neither canonical nor owner temp files after write or fsync failure", async () => {
+    for (const failure of ["write", "fsync"] as const) {
+      const root = project();
+      await expect(
+        acquireObserverTaskLock({
+          projectRoot: root,
+          taskId: "daily-tech-digest",
+          dependencies: {
+            ...(failure === "write"
+              ? { writeFile: () => { throw new Error("private write failure"); } }
+              : { fsync: () => { throw new Error("private fsync failure"); } }),
+          },
+        }),
+      ).rejects.toThrow("Invalid observer task lock");
+
+      expect(readdirSync(join(root, ".state", "locks"))).toEqual([]);
+    }
   });
 
   it("never removes a replacement lock during release", async () => {
