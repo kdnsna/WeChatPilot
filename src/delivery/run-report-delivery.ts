@@ -21,6 +21,7 @@ import {
   assertNoSymlinkComponents,
   resolveProjectPath,
 } from "../lib/paths.js";
+import { sanitizeReportText } from "../observer/report-policy.js";
 import { RunReportSchema, type RunReport } from "../observer/run-report.js";
 import {
   WechatDeliveryIndeterminateError,
@@ -34,6 +35,8 @@ const MAX_LEDGER_BYTES = 32 * 1_024;
 const MAX_LOCK_BYTES = 4 * 1_024;
 const MAX_ATTEMPTS = 3;
 const MAX_TEXT_CHARACTERS = 1_800;
+const MAX_PROJECT_LABEL_CHARACTERS = 96;
+const MAX_TASK_NAME_CHARACTERS = 160;
 
 const RunIdSchema = z.uuid();
 const HashSchema = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -372,8 +375,29 @@ function truncate(value: string, maximum: number): string {
   return `${characters.slice(0, maximum - 1).join("")}…`;
 }
 
+function safeAuthorityText(
+  value: string,
+  maximumCharacters: number,
+  fallback: string,
+): string {
+  return (
+    sanitizeReportText(value, { projectRoot: "", maximumCharacters }) ??
+    fallback
+  );
+}
+
 export function formatRunReportText(report: RunReport): string {
   const parsed = RunReportSchema.parse(report);
+  const projectLabel = safeAuthorityText(
+    parsed.projectLabel,
+    MAX_PROJECT_LABEL_CHARACTERS,
+    "未命名项目",
+  );
+  const taskName = safeAuthorityText(
+    parsed.taskName,
+    MAX_TASK_NAME_CHARACTERS,
+    "未命名任务",
+  );
   const status = {
     success: "成功",
     failed: "失败",
@@ -383,8 +407,8 @@ export function formatRunReportText(report: RunReport): string {
     skipped: "已跳过",
   }[parsed.status];
   const prefix = [
-    `运行报告｜${parsed.projectLabel}`,
-    `任务：${parsed.taskName}`,
+    `运行报告｜${projectLabel}`,
+    `任务：${taskName}`,
     `状态：${status}｜耗时：${parsed.durationMs} ms`,
   ];
   const used = [...prefix.join("\n")].length + 1;
@@ -847,6 +871,19 @@ export async function deliverRunReport(
     }
 
     if (options.imagePath === undefined) {
+      if (textSent.imageAttempt > 0) {
+        writeAfterAttempt(
+          options.projectRoot,
+          failedLedger(
+            textSent,
+            "image",
+            "media-preparation",
+            timestamp(now),
+            textSent.textChunks,
+          ),
+        );
+        throw new WechatMediaPreparationError();
+      }
       const sentAt = timestamp(now);
       const sent: DeliveryLedger = {
         ...textSent,

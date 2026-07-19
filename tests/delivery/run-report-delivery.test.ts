@@ -194,6 +194,47 @@ describe("run report delivery ledger", () => {
     expect(sendImage).toHaveBeenCalledTimes(2);
   });
 
+  it("blocks a rejected image retry when its required image path disappears", async () => {
+    const root = project();
+    const sendText = vi.fn(async () => ({ status: "sent" as const, chunks: 1 }));
+    const sendImage = vi.fn(async () => {
+      throw new WechatDeliveryRejectedError();
+    });
+    await expect(
+      deliverRunReport({
+        projectRoot: root,
+        report: report(),
+        imagePath: join(root, "report.png"),
+        sendText,
+        sendImage,
+        now: () => NOW,
+      }),
+    ).rejects.toBeInstanceOf(WechatDeliveryRejectedError);
+
+    await expect(
+      deliverRunReport({
+        projectRoot: root,
+        report: report(),
+        sendText,
+        sendImage,
+        now: () => new Date(NOW.getTime() + 1_000),
+      }),
+    ).rejects.toBeInstanceOf(WechatMediaPreparationError);
+    expect(ledger(root)).toMatchObject({
+      status: "failed",
+      failedPart: "image",
+      failureKind: "media-preparation",
+      textAttempt: 1,
+      imageAttempt: 1,
+      textChunks: 1,
+    });
+    expect(runDeliveryDisposition({ projectRoot: root, report: report() })).toBe(
+      "blocked",
+    );
+    expect(sendText).toHaveBeenCalledOnce();
+    expect(sendImage).toHaveBeenCalledOnce();
+  });
+
   it("completes a text-only report with an explicit not-generated image result", async () => {
     const root = project();
     const sendText = vi.fn(async () => ({ status: "sent" as const, chunks: 1 }));
@@ -549,6 +590,41 @@ describe("run report delivery ledger", () => {
       invalid: 0,
     });
     expect(existsSync(join(root, ".state"))).toBe(false);
+  });
+
+  it("locally sanitizes untrusted authority fields into bounded single lines", () => {
+    const secret = `sk-${"a".repeat(24)}`;
+    const text = formatRunReportText(
+      report({
+        projectLabel: `Pilot\n项目\u202e https://private.test/?token=value`,
+        taskName: `\u0000 ${secret}\t/Users/private/account/config`,
+      }),
+    );
+    const lines = text.split("\n");
+
+    expect(lines).toHaveLength(4);
+    expect(lines.every((line) => [...line].length <= 520)).toBe(true);
+    expect(
+      lines.every(
+        (line) =>
+          !/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(
+            line,
+          ),
+      ),
+    ).toBe(true);
+    expect(text).not.toContain("/Users/private");
+    expect(text).not.toContain("https://");
+    expect(text).not.toContain(secret);
+
+    const fallback = formatRunReportText(
+      report({ projectLabel: "\n\t\u202e", taskName: "\u0000" }),
+    );
+    expect(fallback.split("\n")).toEqual([
+      "运行报告｜未命名项目",
+      "任务：未命名任务",
+      "状态：成功｜耗时：60000 ms",
+      "摘要：今日任务已完成",
+    ]);
   });
 
   it("counts retryable work separately from indeterminate and invalid ledgers", async () => {
