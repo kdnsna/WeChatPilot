@@ -104,7 +104,15 @@ export function writeProjectBytesAtomic(
     descriptor = undefined;
     renameSync(temporary, target);
     temporaryExists = false;
-    chmodSync(target, 0o600);
+    const directoryDescriptor = openSync(
+      parent,
+      constants.O_RDONLY | (constants.O_DIRECTORY ?? 0),
+    );
+    try {
+      fsyncSync(directoryDescriptor);
+    } finally {
+      closeSync(directoryDescriptor);
+    }
   } finally {
     if (descriptor !== undefined) {
       closeSync(descriptor);
