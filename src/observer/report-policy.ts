@@ -23,7 +23,7 @@ const BIDI_CONTROL_CHARACTERS = /[\u202a-\u202e\u2066-\u2069]/gu;
 const DOUBLE_QUOTED_HOME_PATH = /"\/(?:Users|home)\/[^"\r\n]+"/gu;
 const SINGLE_QUOTED_HOME_PATH = /'\/(?:Users|home)\/[^'\r\n]+'/gu;
 const UNQUOTED_HOME_PATH =
-  /\/(?:Users|home)\/[^\r\n<>"']+?(?=\s+\/(?:Users|home)\/|[。！？；，]|[.!?,;:](?=\s|$)|[\])}](?=\s|$)|$)/gu;
+  /\/(?:Users|home)\/[^\r\n<>]+?(?=\s+\/(?:Users|home)\/|[。！？；，]|[.!?,;:](?=\s|$)|[\])}](?=\s|$)|$)/gu;
 const URL_TEXT = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/giu;
 
 function redactHomePaths(value: string): string {

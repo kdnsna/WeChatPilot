@@ -156,6 +156,21 @@ describe("sanitizeReportText", () => {
     ).toBe("failed at [LOCAL_PATH]. Retry later.");
   });
 
+  it("redacts unquoted home paths containing legal quote characters", () => {
+    expect(
+      sanitizeReportText(
+        "failed at /Users/alice/O'Brien/file.txt. Continue.",
+        options,
+      ),
+    ).toBe("failed at [LOCAL_PATH]. Continue.");
+    expect(
+      sanitizeReportText(
+        'failed at /home/bob/Team"Blue"/file.txt; keep status.',
+        options,
+      ),
+    ).toBe("failed at [LOCAL_PATH]; keep status.");
+  });
+
   it("replaces URL-shaped text after path handling", () => {
     expect(
       sanitizeReportText(
@@ -265,6 +280,31 @@ describe("buildRunReport", () => {
 
     expect(JSON.stringify(report).includes(privateMarker)).toBe(false);
     expect(report.summary).toEqual(["token=[REDACTED]"]);
+  });
+
+  it("does not retain quote-bearing home path fragments in a built report", () => {
+    const report = buildRunReport({
+      authority,
+      projectRoot: "/opt/example/private-project",
+      draft: {
+        version: 1,
+        summary: [
+          "mac /Users/alice/O'Brien/file.txt. Continue.",
+          'linux /home/bob/Team"Blue"/file.txt; keep status.',
+        ],
+        metrics: [],
+        artifacts: [],
+      },
+    });
+
+    expect(report.summary).toEqual([
+      "mac [LOCAL_PATH]. Continue.",
+      "linux [LOCAL_PATH]; keep status.",
+    ]);
+    const serialized = JSON.stringify(report);
+    for (const fragment of ["alice", "O'Brien", "bob", 'Team"Blue"']) {
+      expect(serialized.includes(fragment)).toBe(false);
+    }
   });
 
   it("sanitizes failure information for failed reports", () => {
