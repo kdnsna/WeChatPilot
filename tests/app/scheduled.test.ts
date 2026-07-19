@@ -172,6 +172,7 @@ describe("scheduled digest job", () => {
     await expect(
       runScheduledDigest({
         projectRoot: project(),
+        now: new Date("2026-07-19T00:00:00.000Z"),
         dependencies: {
           generateDigest,
           prepareSender: vi.fn(async () => vi.fn()),
@@ -199,6 +200,7 @@ describe("scheduled digest job", () => {
 
     await runScheduledDigest({
       projectRoot: project(),
+      now: new Date("2026-07-19T00:00:00.000Z"),
       dependencies: {
         generateDigest: vi.fn(async () => ({
           status: "generated" as const,
