@@ -36,6 +36,7 @@ qrcode*
 *.qr.png
 *.qr.svg
 .codex/
+.superpowers/
 *.codex-output.json
 *.codex-output.md
 
