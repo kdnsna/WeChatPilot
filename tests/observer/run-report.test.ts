@@ -141,13 +141,13 @@ describe("sanitizeReportText", () => {
     ).toBe("[LOCAL_PATH] [LOCAL_PATH] [LOCAL_PATH]");
   });
 
-  it("redacts quoted and sentence-delimited home paths containing spaces", () => {
+  it("fails closed for quoted paths and bounds unquoted paths", () => {
     expect(
       sanitizeReportText(
         '打开 "/Users/alice/Library/Application Support/Private/db.sqlite"，然后继续任务。',
         options,
       ),
-    ).toBe('打开 "[LOCAL_PATH]"，然后继续任务。');
+    ).toBe("打开 [LOCAL_PATH]");
     expect(
       sanitizeReportText(
         "failed at /home/bob/My Project/private/db.sqlite. Retry later.",
@@ -171,28 +171,28 @@ describe("sanitizeReportText", () => {
     ).toBe("failed at [LOCAL_PATH]; keep status.");
   });
 
-  it("uses only boundary-adjacent quotes to close a quoted home path", () => {
+  it("fails closed for quoted paths containing same-kind inner quotes", () => {
     expect(
       sanitizeReportText(
         "failed at '/Users/alice/O'Brien/file.txt'. Continue.",
         options,
       ),
-    ).toBe("failed at '[LOCAL_PATH]'. Continue.");
+    ).toBe("failed at [LOCAL_PATH]");
     expect(
       sanitizeReportText(
         'failed at "/home/bob/Team"Blue"/file.txt". Continue.',
         options,
       ),
-    ).toBe('failed at "[LOCAL_PATH]". Continue.');
+    ).toBe("failed at [LOCAL_PATH]");
   });
 
-  it("preserves non-ASCII text directly after a quoted home path", () => {
+  it("fails closed when non-ASCII text follows a quoted home path", () => {
     expect(
       sanitizeReportText(
         '打开 "/Users/alice/My Project/file.txt"然后继续',
         options,
       ),
-    ).toBe('打开 "[LOCAL_PATH]"然后继续');
+    ).toBe("打开 [LOCAL_PATH]");
   });
 
   it("fails closed when an internal quote precedes a non-ASCII path component", () => {
@@ -201,7 +201,7 @@ describe("sanitizeReportText", () => {
         'failed at "/Users/alice/Team"蓝色"/file.txt". Continue.',
         options,
       ),
-    ).toBe('failed at "[LOCAL_PATH]". Continue.');
+    ).toBe("failed at [LOCAL_PATH]");
   });
 
   it("fails closed to line end when a quoted home path is unterminated", () => {
@@ -210,10 +210,33 @@ describe("sanitizeReportText", () => {
       options,
     );
 
-    expect(result).toBe('failed at "[LOCAL_PATH]');
+    expect(result).toBe("failed at [LOCAL_PATH]");
     for (const fragment of ["alice", "Blue", "file.txt"]) {
       expect(result?.includes(fragment)).toBe(false);
     }
+  });
+
+  it("fails closed for unterminated quoted paths with ambiguous tails", () => {
+    for (const value of [
+      'failed at "/Users/alice/Team" Blue/file.txt',
+      'failed at "/Users/alice/Team"蓝色/file.txt',
+    ]) {
+      const result = sanitizeReportText(value, options);
+      expect(result).toBe("failed at [LOCAL_PATH]");
+      for (const fragment of ["alice", "Blue", "蓝色", "file.txt"]) {
+        expect(result?.includes(fragment)).toBe(false);
+      }
+    }
+  });
+
+  it("fails closed only through the quoted path's current line", () => {
+    const result = sanitizeReportText(
+      'first "/Users/alice/private/file.txt" hidden\n下一行保留',
+      options,
+    );
+
+    expect(result).toBe("first [LOCAL_PATH]下一行保留");
+    expect(result?.includes("hidden")).toBe(false);
   });
 
   it("replaces URL-shaped text after path handling", () => {
@@ -368,8 +391,8 @@ describe("buildRunReport", () => {
     });
 
     expect(report.summary).toEqual([
-      "mac '[LOCAL_PATH]'. Continue.",
-      'linux "[LOCAL_PATH]". Continue.',
+      "mac [LOCAL_PATH]",
+      "linux [LOCAL_PATH]",
     ]);
     const serialized = JSON.stringify(report);
     for (const fragment of ["alice", "Brien/file.txt", "bob", 'Blue"/file.txt']) {
@@ -377,7 +400,7 @@ describe("buildRunReport", () => {
     }
   });
 
-  it("preserves non-ASCII text after a quoted path in a built report", () => {
+  it("fails closed when non-ASCII text follows a quoted path in a built report", () => {
     const report = buildRunReport({
       authority,
       projectRoot: "/opt/example/private-project",
@@ -389,7 +412,7 @@ describe("buildRunReport", () => {
       },
     });
 
-    expect(report.summary).toEqual(['打开 "[LOCAL_PATH]"然后继续']);
+    expect(report.summary).toEqual(["打开 [LOCAL_PATH]"]);
     const serialized = JSON.stringify(report);
     for (const fragment of ["alice", "My Project", "file.txt"]) {
       expect(serialized.includes(fragment)).toBe(false);
@@ -411,7 +434,7 @@ describe("buildRunReport", () => {
     });
 
     expect(report.summary).toEqual([
-      'failed at "[LOCAL_PATH]". Continue.',
+      "failed at [LOCAL_PATH]",
     ]);
     const serialized = JSON.stringify(report);
     for (const fragment of ["alice", "蓝色", "file.txt"]) {
@@ -431,9 +454,34 @@ describe("buildRunReport", () => {
       },
     });
 
-    expect(report.summary).toEqual(['failed at "[LOCAL_PATH]']);
+    expect(report.summary).toEqual(["failed at [LOCAL_PATH]"]);
     const serialized = JSON.stringify(report);
     for (const fragment of ["alice", "Blue", "file.txt"]) {
+      expect(serialized.includes(fragment)).toBe(false);
+    }
+  });
+
+  it("does not retain ambiguous unterminated tails in a built report", () => {
+    const report = buildRunReport({
+      authority,
+      projectRoot: "/opt/example/private-project",
+      draft: {
+        version: 1,
+        summary: [
+          'space "/Users/alice/Team" Blue/file.txt',
+          'unicode "/Users/alice/Team"蓝色/file.txt',
+        ],
+        metrics: [],
+        artifacts: [],
+      },
+    });
+
+    expect(report.summary).toEqual([
+      "space [LOCAL_PATH]",
+      "unicode [LOCAL_PATH]",
+    ]);
+    const serialized = JSON.stringify(report);
+    for (const fragment of ["alice", "Blue", "蓝色", "file.txt"]) {
       expect(serialized.includes(fragment)).toBe(false);
     }
   });

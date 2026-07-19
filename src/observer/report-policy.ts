@@ -23,28 +23,9 @@ const BIDI_CONTROL_CHARACTERS = /[\u202a-\u202e\u2066-\u2069]/gu;
 const UNQUOTED_HOME_PATH =
   /\/(?:Users|home)\/[^\r\n<>]+?(?=\s+\/(?:Users|home)\/|[。！？；，]|[.!?,;:](?=\s|$)|[\])}](?=\s|$)|$)/gu;
 const URL_TEXT = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/giu;
-const TRUSTED_ASCII_QUOTED_PATH_BOUNDARIES = new Set([
-  ".",
-  "!",
-  "?",
-  ",",
-  ";",
-  ":",
-  ")",
-  "]",
-  "}",
-]);
 
-interface QuotedHomeOpening {
-  readonly index: number;
-  readonly quote: "'" | '"';
-}
-
-function findQuotedHomeOpening(
-  line: string,
-  startIndex: number,
-): QuotedHomeOpening | null {
-  for (let index = startIndex; index < line.length; index += 1) {
+function findQuotedHomeOpening(line: string): number | null {
+  for (let index = 0; index < line.length; index += 1) {
     const quote = line[index];
     if (quote !== "'" && quote !== '"') {
       continue;
@@ -53,51 +34,21 @@ function findQuotedHomeOpening(
       line.startsWith("/Users/", index + 1) ||
       line.startsWith("/home/", index + 1)
     ) {
-      return { index, quote };
+      return index;
     }
   }
   return null;
 }
 
-function isTrustedQuotedHomeClosingBoundary(
-  line: string,
-  closingIndex: number,
-): boolean {
-  const nextCharacter = line[closingIndex + 1];
-  if (nextCharacter === undefined) {
-    return true;
-  }
-  return (
-    nextCharacter.charCodeAt(0) > 0x7f ||
-    /\s/u.test(nextCharacter) ||
-    TRUSTED_ASCII_QUOTED_PATH_BOUNDARIES.has(nextCharacter)
-  );
-}
-
 function redactQuotedHomePathsInLine(line: string): string {
-  let cursor = 0;
-  let result = "";
-  while (cursor < line.length) {
-    const opening = findQuotedHomeOpening(line, cursor);
-    if (opening === null) {
-      return result + line.slice(cursor);
-    }
-    result += line.slice(cursor, opening.index);
-
-    // POSIX names can contain unescaped quotes. Taking the line's last matching
-    // quote fails closed: ambiguous text may be over-redacted, but no path tail leaks.
-    const closingIndex = line.lastIndexOf(opening.quote);
-    if (
-      closingIndex <= opening.index ||
-      !isTrustedQuotedHomeClosingBoundary(line, closingIndex)
-    ) {
-      return result + `${opening.quote}[LOCAL_PATH]`;
-    }
-
-    result += `${opening.quote}[LOCAL_PATH]${opening.quote}`;
-    cursor = closingIndex + 1;
+  const openingIndex = findQuotedHomeOpening(line);
+  if (openingIndex === null) {
+    return line;
   }
-  return result;
+
+  // Unescaped POSIX names make closing quotes indistinguishable from path data.
+  // Fail closed through this line so an ambiguous path tail can never leak.
+  return `${line.slice(0, openingIndex)}[LOCAL_PATH]`;
 }
 
 function redactQuotedHomePaths(value: string): string {
@@ -127,20 +78,33 @@ export function sanitizeReportText(
     return null;
   }
 
-  const controlsRemoved = redacted
-    .replace(CONTROL_CHARACTERS, "")
-    .replace(BIDI_CONTROL_CHARACTERS, "");
-  const closureRedacted = redactSecrets(controlsRemoved);
-  if (typeof closureRedacted !== "string") {
+  const sanitizedLines: string[] = [];
+  for (const line of redacted.split(/\r\n|\r|\n/u)) {
+    const controlsRemoved = line
+      .replace(CONTROL_CHARACTERS, "")
+      .replace(BIDI_CONTROL_CHARACTERS, "");
+    const closureRedacted = redactSecrets(controlsRemoved);
+    if (typeof closureRedacted !== "string") {
+      return null;
+    }
+
+    let sanitizedLine = closureRedacted;
+    if (options.projectRoot.length > 0) {
+      sanitizedLine = sanitizedLine.replaceAll(
+        options.projectRoot,
+        "[LOCAL_PATH]",
+      );
+    }
+    sanitizedLines.push(
+      redactHomePaths(sanitizedLine).replace(URL_TEXT, "[URL]"),
+    );
+  }
+
+  const joinedClosureRedacted = redactSecrets(sanitizedLines.join(""));
+  if (typeof joinedClosureRedacted !== "string") {
     return null;
   }
-  let sanitized = closureRedacted;
-
-  if (options.projectRoot.length > 0) {
-    sanitized = sanitized.replaceAll(options.projectRoot, "[LOCAL_PATH]");
-  }
-
-  sanitized = redactHomePaths(sanitized)
+  const sanitized = joinedClosureRedacted
     .replace(URL_TEXT, "[URL]")
     .replaceAll(/\s+/gu, " ")
     .trim();
