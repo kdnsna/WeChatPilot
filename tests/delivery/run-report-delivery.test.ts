@@ -442,6 +442,36 @@ describe("run report delivery ledger", () => {
     expect(sendText).toHaveBeenCalledOnce();
   });
 
+  it("rejects a FIFO main lock as Busy without blocking or sending", () => {
+    const root = project();
+    const locks = join(root, ".state", "locks");
+    mkdirSync(locks, { recursive: true, mode: 0o700 });
+    execFileSync("/usr/bin/mkfifo", [
+      join(locks, `report-delivery-${RUN_ID}.lock`),
+    ]);
+    const moduleUrl = pathToFileURL(
+      join(process.cwd(), "src", "delivery", "run-report-delivery.ts"),
+    ).href;
+    const child = spawnSync(
+      "/opt/homebrew/opt/node@22/bin/node",
+      [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "-e",
+        `import { deliverRunReport } from ${JSON.stringify(moduleUrl)};\n` +
+          `let sends = 0;\n` +
+          `try { await deliverRunReport({ projectRoot: ${JSON.stringify(root)}, report: ${JSON.stringify(report())}, sendText: async () => { sends += 1; return { status: "sent", chunks: 1 }; }, sendImage: async () => { sends += 1; return { status: "sent" }; } }); } catch (error) { process.stdout.write(JSON.stringify({ name: error?.name, sends })); }`,
+      ],
+      { encoding: "utf8", timeout: 1_500 },
+    );
+
+    expect(child.status).toBe(0);
+    expect(child.stdout).toBe(
+      JSON.stringify({ name: "RunReportDeliveryBusyError", sends: 0 }),
+    );
+  });
+
   it("does not remove a replacement lock during release", async () => {
     const root = project();
     const lock = join(

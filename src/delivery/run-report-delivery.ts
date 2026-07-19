@@ -514,26 +514,56 @@ function existingLock(
   try {
     descriptor = openSync(
       assertNoSymlinkComponents(projectRoot, filePath),
-      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+      constants.O_RDONLY |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0),
     );
-    const stat = fstatSync(descriptor);
+    const opened = fstatSync(descriptor);
     if (
-      !stat.isFile() ||
-      (stat.mode & 0o077) !== 0 ||
-      stat.size <= 0 ||
-      stat.size > MAX_LOCK_BYTES
+      !opened.isFile() ||
+      (opened.mode & 0o777) !== 0o600 ||
+      opened.size <= 0 ||
+      opened.size > MAX_LOCK_BYTES
+    ) {
+      throw new RunReportDeliveryBusyError();
+    }
+    const buffer = Buffer.alloc(MAX_LOCK_BYTES + 1);
+    let total = 0;
+    while (total < buffer.byteLength) {
+      const count = readSync(
+        descriptor,
+        buffer,
+        total,
+        buffer.byteLength - total,
+        null,
+      );
+      if (count === 0) {
+        break;
+      }
+      total += count;
+    }
+    const final = fstatSync(descriptor);
+    if (
+      total > MAX_LOCK_BYTES ||
+      total !== opened.size ||
+      !sameFile(final, opened) ||
+      !final.isFile() ||
+      (final.mode & 0o777) !== 0o600 ||
+      final.size !== opened.size ||
+      final.mtimeMs !== opened.mtimeMs ||
+      final.ctimeMs !== opened.ctimeMs
     ) {
       throw new RunReportDeliveryBusyError();
     }
     const parsed = LockRecordSchema.safeParse(
-      JSON.parse(readFileSync(descriptor, "utf8")) as unknown,
+      JSON.parse(buffer.subarray(0, total).toString("utf8")) as unknown,
     );
     if (!parsed.success) {
       throw new RunReportDeliveryBusyError();
     }
     return {
       record: parsed.data,
-      identity: { dev: stat.dev, ino: stat.ino },
+      identity: { dev: opened.dev, ino: opened.ino },
     };
   } catch (error) {
     if (error instanceof RunReportDeliveryBusyError) {
