@@ -22,9 +22,9 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
 const BIDI_CONTROL_CHARACTERS = /[\u202a-\u202e\u2066-\u2069]/gu;
 const URL_TEXT = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/giu;
 
-function findHomePrefix(line: string): number | null {
-  const macosIndex = line.indexOf("/Users/");
-  const linuxIndex = line.indexOf("/home/");
+function findHomePrefix(value: string): number | null {
+  const macosIndex = value.indexOf("/Users/");
+  const linuxIndex = value.indexOf("/home/");
   if (macosIndex < 0) {
     return linuxIndex < 0 ? null : linuxIndex;
   }
@@ -34,52 +34,38 @@ function findHomePrefix(line: string): number | null {
   return Math.min(macosIndex, linuxIndex);
 }
 
-function redactionStartIndex(line: string, pathIndex: number): number {
-  const precedingCharacter = line[pathIndex - 1];
+function redactionStartIndex(value: string, pathIndex: number): number {
+  const precedingCharacter = value[pathIndex - 1];
   return precedingCharacter === "'" || precedingCharacter === '"'
     ? pathIndex - 1
     : pathIndex;
 }
 
-function redactHomePathsInLine(line: string): string {
-  const prefixIndex = findHomePrefix(line);
+function redactHomePaths(value: string): string {
+  const prefixIndex = findHomePrefix(value);
   if (prefixIndex === null) {
-    return line;
+    return value;
   }
 
   // POSIX filenames make path boundaries in free text impossible to prove.
-  // Fail closed from the first home prefix through this line.
-  const replacementIndex = redactionStartIndex(line, prefixIndex);
-  return `${line.slice(0, replacementIndex)}[LOCAL_PATH]`;
-}
-
-function redactHomePaths(value: string): string {
-  return value
-    .split(/(\r\n|\r|\n)/u)
-    .map((line) => redactHomePathsInLine(line))
-    .join("");
-}
-
-function redactProjectRootInLine(line: string, projectRoot: string): string {
-  if (!projectRoot.startsWith("/Users/") && !projectRoot.startsWith("/home/")) {
-    return line.replaceAll(projectRoot, "[LOCAL_PATH]");
-  }
-
-  const projectRootIndex = line.indexOf(projectRoot);
-  if (projectRootIndex < 0) {
-    return line;
-  }
-  return `${line.slice(0, redactionStartIndex(line, projectRootIndex))}[LOCAL_PATH]`;
+  // Controls are already removed, so fail closed through the entire field.
+  const replacementIndex = redactionStartIndex(value, prefixIndex);
+  return `${value.slice(0, replacementIndex)}[LOCAL_PATH]`;
 }
 
 function redactProjectRoot(value: string, projectRoot: string): string {
   if (projectRoot.length === 0) {
     return value;
   }
-  return value
-    .split(/(\r\n|\r|\n)/u)
-    .map((line) => redactProjectRootInLine(line, projectRoot))
-    .join("");
+  if (!projectRoot.startsWith("/Users/") && !projectRoot.startsWith("/home/")) {
+    return value.replaceAll(projectRoot, "[LOCAL_PATH]");
+  }
+
+  const projectRootIndex = value.indexOf(projectRoot);
+  if (projectRootIndex < 0) {
+    return value;
+  }
+  return `${value.slice(0, redactionStartIndex(value, projectRootIndex))}[LOCAL_PATH]`;
 }
 
 export function sanitizeReportText(
@@ -95,31 +81,15 @@ export function sanitizeReportText(
     return null;
   }
 
-  const sanitizedLines: string[] = [];
-  for (const line of redacted.split(/\r\n|\r|\n/u)) {
-    const controlsRemoved = line
-      .replace(CONTROL_CHARACTERS, "")
-      .replace(BIDI_CONTROL_CHARACTERS, "");
-    const closureRedacted = redactSecrets(controlsRemoved);
-    if (typeof closureRedacted !== "string") {
-      return null;
-    }
-
-    const sanitizedLine = redactProjectRoot(
-      closureRedacted,
-      options.projectRoot,
-    );
-    sanitizedLines.push(
-      redactHomePaths(sanitizedLine).replace(URL_TEXT, "[URL]"),
-    );
-  }
-
-  const joinedClosureRedacted = redactSecrets(sanitizedLines.join(""));
-  if (typeof joinedClosureRedacted !== "string") {
+  const controlsRemoved = redacted
+    .replace(CONTROL_CHARACTERS, "")
+    .replace(BIDI_CONTROL_CHARACTERS, "");
+  const closureRedacted = redactSecrets(controlsRemoved);
+  if (typeof closureRedacted !== "string") {
     return null;
   }
   const sanitized = redactHomePaths(
-    redactProjectRoot(joinedClosureRedacted, options.projectRoot),
+    redactProjectRoot(closureRedacted, options.projectRoot),
   )
     .replace(URL_TEXT, "[URL]")
     .replaceAll(/\s+/gu, " ")

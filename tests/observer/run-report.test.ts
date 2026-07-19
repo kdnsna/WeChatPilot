@@ -179,6 +179,44 @@ describe("sanitizeReportText", () => {
     }
   });
 
+  it("atomically sanitizes controls and bidi that reconstruct sensitive text", () => {
+    const probes = [
+      {
+        value: "failed /Users/al\nice/private.txt",
+        expected: "failed [LOCAL_PATH]",
+      },
+      {
+        value: "failed /Users/al\rice/private.txt",
+        expected: "failed [LOCAL_PATH]",
+      },
+      {
+        value: "failed /Us\u0000ers/alice/private.txt",
+        expected: "failed [LOCAL_PATH]",
+      },
+      {
+        value:
+          "failed /Users/exa\nmple/private-project/output.txt",
+        expected: "failed [LOCAL_PATH]",
+      },
+      {
+        value: "open https://priv\nate.invalid/private-path",
+        expected: "open [URL]",
+      },
+      {
+        value: "open https://priv\u202eate.invalid/private-path",
+        expected: "open [URL]",
+      },
+    ] as const;
+
+    for (const { value, expected } of probes) {
+      const result = sanitizeReportText(value, options);
+      expect(result).toBe(expected);
+      expect(result === null ? null : sanitizeReportText(result, options)).toBe(
+        result,
+      );
+    }
+  });
+
   it("fails closed for quoted paths and bounds unquoted paths", () => {
     expect(
       sanitizeReportText(
@@ -267,14 +305,15 @@ describe("sanitizeReportText", () => {
     }
   });
 
-  it("fails closed only through the quoted path's current line", () => {
+  it("fails closed through the field after deleting a quoted path line break", () => {
     const result = sanitizeReportText(
       'first "/Users/alice/private/file.txt" hidden\n下一行保留',
       options,
     );
 
-    expect(result).toBe("first [LOCAL_PATH]下一行保留");
+    expect(result).toBe("first [LOCAL_PATH]");
     expect(result?.includes("hidden")).toBe(false);
+    expect(result?.includes("下一行保留")).toBe(false);
   });
 
   it("fails closed for angle-delimited and angle-bearing home paths", () => {
@@ -289,19 +328,20 @@ describe("sanitizeReportText", () => {
     ).toBe("[LOCAL_PATH]");
   });
 
-  it("fails closed only through an unquoted home path's current line", () => {
+  it("fails closed through the field after deleting an unquoted path line break", () => {
     expect(
       sanitizeReportText(
         "first /Users/alice/private/file.txt hidden\n下一行保留",
         options,
       ),
-    ).toBe("first [LOCAL_PATH]下一行保留");
+    ).toBe("first [LOCAL_PATH]");
   });
 
   it("leaves ordinary text without a home prefix unchanged", () => {
     expect(sanitizeReportText("ordinary <value> remains", options)).toBe(
       "ordinary <value> remains",
     );
+    expect(sanitizeReportText("ordinary\ntext", options)).toBe("ordinarytext");
   });
 
   it("replaces URL-shaped text after path handling", () => {
@@ -441,6 +481,40 @@ describe("buildRunReport", () => {
     expect(RunReportSchema.parse(report)).toEqual(report);
     const serialized = JSON.stringify(report);
     for (const fragment of ["output/private.txt", "alice", "bob"]) {
+      expect(serialized.includes(fragment)).toBe(false);
+    }
+  });
+
+  it("atomically closes reconstructed paths and URLs in a built report", () => {
+    const report = buildRunReport({
+      authority,
+      projectRoot: "/Users/example/private-project",
+      draft: {
+        version: 1,
+        summary: [
+          "home /Users/al\nice/private.txt",
+          "root /Users/exa\nmple/private-project/output.txt",
+          "url https://priv\nate.invalid/private-path",
+          "cr /home/bo\rb/private.txt",
+          "nul /Us\u0000ers/alice/private.txt",
+          "bidi https://priv\u202eate.invalid/private-path",
+        ],
+        metrics: [],
+        artifacts: [],
+      },
+    });
+
+    expect(report.summary).toEqual([
+      "home [LOCAL_PATH]",
+      "root [LOCAL_PATH]",
+      "url [URL]",
+      "cr [LOCAL_PATH]",
+      "nul [LOCAL_PATH]",
+      "bidi [URL]",
+    ]);
+    expect(RunReportSchema.parse(report)).toEqual(report);
+    const serialized = JSON.stringify(report);
+    for (const fragment of ["ice/private.txt", "output.txt", "ate.invalid"]) {
       expect(serialized.includes(fragment)).toBe(false);
     }
   });
