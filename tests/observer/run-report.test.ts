@@ -76,6 +76,28 @@ describe("RunReportDraftSchema", () => {
       ).toBe(false);
     }
   });
+
+  it("defaults an omitted failure to null without discarding a success summary", () => {
+    const draft = {
+      version: 1,
+      summary: ["结构化业务摘要"],
+      metrics: [{ label: "发送分片", value: "2" }],
+      artifacts: ["output/2026-07-19/digest.md"],
+    } as const;
+
+    expect(RunReportDraftSchema.parse(draft)).toEqual({
+      ...draft,
+      failure: null,
+    });
+    const report = buildRunReport({
+      authority,
+      projectRoot: "/Users/example/private-project",
+      draft,
+    });
+    expect(report.summary).toEqual(draft.summary);
+    expect(report.metrics).toEqual(draft.metrics);
+    expect(report.failure).toBeNull();
+  });
 });
 
 describe("sanitizeReportText", () => {
@@ -88,6 +110,17 @@ describe("sanitizeReportText", () => {
     expect(
       sanitizeReportText("  token=secret-value\u0000  retained  ", options),
     ).toBe("token=[REDACTED] retained");
+  });
+
+  it("closes secret-key bypasses created by removing control characters", () => {
+    const privateMarker = ["PRIVATE", "VALUE", "SENTINEL"].join("_");
+    const result = sanitizeReportText(
+      `to\u0000ken=${privateMarker}`,
+      options,
+    );
+
+    expect(result?.includes(privateMarker)).toBe(false);
+    expect(result).toBe("token=[REDACTED]");
   });
 
   it("deletes C0, C1, and bidi controls while retaining ordinary spaces", () => {
@@ -108,6 +141,21 @@ describe("sanitizeReportText", () => {
     ).toBe("[LOCAL_PATH] [LOCAL_PATH] [LOCAL_PATH]");
   });
 
+  it("redacts quoted and sentence-delimited home paths containing spaces", () => {
+    expect(
+      sanitizeReportText(
+        '打开 "/Users/alice/Library/Application Support/Private/db.sqlite"，然后继续任务。',
+        options,
+      ),
+    ).toBe('打开 "[LOCAL_PATH]"，然后继续任务。');
+    expect(
+      sanitizeReportText(
+        "failed at /home/bob/My Project/private/db.sqlite. Retry later.",
+        options,
+      ),
+    ).toBe("failed at [LOCAL_PATH]. Retry later.");
+  });
+
   it("replaces URL-shaped text after path handling", () => {
     expect(
       sanitizeReportText(
@@ -124,6 +172,17 @@ describe("sanitizeReportText", () => {
         maximumCharacters: 5,
       }),
     ).toBe("abcd…");
+  });
+
+  it("counts Unicode code points without splitting a surrogate pair", () => {
+    const result = sanitizeReportText("😀x", {
+      ...options,
+      maximumCharacters: 2,
+    });
+
+    expect(result).toBe("😀x");
+    expect(result === null ? 0 : [...result].length).toBeLessThanOrEqual(2);
+    expect(result === null ? false : /[\ud800-\udbff](?![\udc00-\udfff])|(?:^|[^\ud800-\udbff])[\udc00-\udfff]/u.test(result)).toBe(false);
   });
 
   it("rejects a value that becomes empty", () => {
@@ -188,6 +247,24 @@ describe("buildRunReport", () => {
     expect(report.runId).toBe(authority.runId);
     expect(report.status).toBe("success");
     expect(report.summary).toEqual(["任务已完成，未提供结构化业务摘要"]);
+  });
+
+  it("does not throw or leak when controls split a secret key in draft text", () => {
+    const privateMarker = ["PRIVATE", "VALUE", "SENTINEL"].join("_");
+    const report = buildRunReport({
+      authority,
+      projectRoot: "/Users/example/private-project",
+      draft: {
+        version: 1,
+        summary: [`to\u0000ken=${privateMarker}`],
+        metrics: [],
+        failure: null,
+        artifacts: [],
+      },
+    });
+
+    expect(JSON.stringify(report).includes(privateMarker)).toBe(false);
+    expect(report.summary).toEqual(["token=[REDACTED]"]);
   });
 
   it("sanitizes failure information for failed reports", () => {

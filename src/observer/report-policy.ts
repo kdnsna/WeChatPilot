@@ -20,8 +20,18 @@ export interface SanitizeReportTextOptions {
 
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
 const BIDI_CONTROL_CHARACTERS = /[\u202a-\u202e\u2066-\u2069]/gu;
-const HOME_PATH = /\/(?:Users|home)\/[^/\s]+(?:\/[^\s<>"']*)?/gu;
+const DOUBLE_QUOTED_HOME_PATH = /"\/(?:Users|home)\/[^"\r\n]+"/gu;
+const SINGLE_QUOTED_HOME_PATH = /'\/(?:Users|home)\/[^'\r\n]+'/gu;
+const UNQUOTED_HOME_PATH =
+  /\/(?:Users|home)\/[^\r\n<>"']+?(?=\s+\/(?:Users|home)\/|[。！？；，]|[.!?,;:](?=\s|$)|[\])}](?=\s|$)|$)/gu;
 const URL_TEXT = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/giu;
+
+function redactHomePaths(value: string): string {
+  return value
+    .replace(DOUBLE_QUOTED_HOME_PATH, '"[LOCAL_PATH]"')
+    .replace(SINGLE_QUOTED_HOME_PATH, "'[LOCAL_PATH]'")
+    .replace(UNQUOTED_HOME_PATH, "[LOCAL_PATH]");
+}
 
 export function sanitizeReportText(
   value: string,
@@ -36,16 +46,20 @@ export function sanitizeReportText(
     return null;
   }
 
-  let sanitized = redacted
+  const controlsRemoved = redacted
     .replace(CONTROL_CHARACTERS, "")
     .replace(BIDI_CONTROL_CHARACTERS, "");
+  const closureRedacted = redactSecrets(controlsRemoved);
+  if (typeof closureRedacted !== "string") {
+    return null;
+  }
+  let sanitized = closureRedacted;
 
   if (options.projectRoot.length > 0) {
     sanitized = sanitized.replaceAll(options.projectRoot, "[LOCAL_PATH]");
   }
 
-  sanitized = sanitized
-    .replace(HOME_PATH, "[LOCAL_PATH]")
+  sanitized = redactHomePaths(sanitized)
     .replace(URL_TEXT, "[URL]")
     .replaceAll(/\s+/gu, " ")
     .trim();
@@ -54,9 +68,11 @@ export function sanitizeReportText(
     return null;
   }
 
-  if (sanitized.length > options.maximumCharacters) {
-    const prefix = sanitized
+  const characters = [...sanitized];
+  if (characters.length > options.maximumCharacters) {
+    const prefix = characters
       .slice(0, options.maximumCharacters - 1)
+      .join("")
       .trimEnd();
     return `${prefix}…`;
   }

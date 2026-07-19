@@ -42,8 +42,10 @@ export function loadObserverConfig(projectRoot: string): ObserverConfig {
     const path = join(projectRoot, "config", "observer-jobs.yaml");
     const document = parse(readFileSync(path, "utf8")) as unknown;
     return ObserverConfigSchema.parse(document);
-  } catch (error) {
-    throw new Error("Invalid observer configuration", { cause: error });
+  } catch {
+    const error = new Error("Invalid observer configuration");
+    error.stack = `${error.name}: ${error.message}`;
+    throw error;
   }
 }
 

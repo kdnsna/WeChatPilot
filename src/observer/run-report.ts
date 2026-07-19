@@ -21,7 +21,10 @@ function safeReportTextSchema(maximumCharacters: number) {
   return z
     .string()
     .min(1)
-    .max(maximumCharacters)
+    .refine(
+      (value) => [...value].length <= maximumCharacters,
+      `report text must contain at most ${maximumCharacters} characters`,
+    )
     .refine(
       (value) =>
         sanitizeReportText(value, {
@@ -88,7 +91,7 @@ export const RunReportDraftSchema = z
     version: z.literal(1),
     summary: z.array(RawTextSchema).max(SUMMARY_MAXIMUM),
     metrics: z.array(RunMetricDraftSchema).max(METRIC_MAXIMUM),
-    failure: RawTextSchema.nullable(),
+    failure: RawTextSchema.nullable().default(null),
     artifacts: z
       .array(ProjectRelativeArtifactPathSchema)
       .max(ARTIFACT_MAXIMUM),

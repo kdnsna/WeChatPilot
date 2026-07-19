@@ -29,9 +29,13 @@ const validJob = {
 } as const;
 
 function writeConfig(value: unknown): string {
+  return writeRawConfig(stringify(value));
+}
+
+function writeRawConfig(contents: string): string {
   const root = mkdtempSync(join(tmpdir(), "wechatpilot-observer-config-"));
   mkdirSync(join(root, "config"));
-  writeFileSync(join(root, "config", "observer-jobs.yaml"), stringify(value), "utf8");
+  writeFileSync(join(root, "config", "observer-jobs.yaml"), contents, "utf8");
   temporaryRoots.push(root);
   return root;
 }
@@ -107,6 +111,37 @@ describe("loadObserverConfig", () => {
       const root = writeConfig({ version: 1, jobs: [{ ...validJob, timeoutMs }] });
       expect(() => loadObserverConfig(root)).toThrow();
     }
+  });
+
+  it("throws only a stable public error without preserving raw parser details", () => {
+    const privateMarker = ["PRIVATE", "CONFIG", "SENTINEL"].join("_");
+    const root = writeRawConfig(
+      `version: 1\njobs:\n  - name: [${privateMarker}\n`,
+    );
+
+    let thrown: unknown;
+    try {
+      loadObserverConfig(root);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const error = thrown as Error;
+    expect(error.message).toBe("Invalid observer configuration");
+    expect("cause" in error).toBe(false);
+
+    const visibleProperties = Object.fromEntries(
+      Object.getOwnPropertyNames(error).map((name) => [
+        name,
+        String((error as unknown as Record<string, unknown>)[name]),
+      ]),
+    );
+    const serialized = JSON.stringify(visibleProperties);
+    expect(serialized.includes(privateMarker)).toBe(false);
+    expect(serialized.includes(root)).toBe(false);
+    expect(serialized.includes("/Users/")).toBe(false);
+    expect(serialized.includes("/var/folders/")).toBe(false);
   });
 });
 
