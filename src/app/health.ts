@@ -4,9 +4,8 @@ import {
   constants,
   statSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { isAbsolute } from "node:path";
-
-import { Resvg } from "@resvg/resvg-js";
 
 import { loadConfig } from "../config/load.js";
 import {
@@ -184,6 +183,12 @@ function defaultDirectoryWritable(path: string): boolean {
 }
 
 function defaultRendererReady(): boolean {
+  const require = createRequire(import.meta.url);
+  const { Resvg } = require("@resvg/resvg-js") as {
+    readonly Resvg: new (svg: string) => {
+      readonly render: () => { readonly asPng: () => Buffer };
+    };
+  };
   const png = new Resvg(
     '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>',
   )
@@ -489,6 +494,7 @@ export function inspectProjectHealth(
   let indeterminateDeliveries = 0;
   let invalidStateRecords = 0;
   let observerStateValid = true;
+  let runStateScanned = false;
   let reports: readonly RunReport[] = [];
   try {
     const state = probes.inspectRunState(paths.root);
@@ -500,16 +506,19 @@ export function inspectProjectHealth(
     } else {
       pendingRecoveryReports = recoveryPending;
       invalidStateRecords += invalidRecords;
+      runStateScanned = true;
     }
   } catch {
     observerStateValid = false;
     invalidStateRecords += 1;
   }
-  try {
-    reports = probes.listFinalRunReports(paths.root);
-  } catch {
-    observerStateValid = false;
-    invalidStateRecords += 1;
+  if (runStateScanned) {
+    try {
+      reports = probes.listFinalRunReports(paths.root);
+    } catch {
+      observerStateValid = false;
+      invalidStateRecords += 1;
+    }
   }
   try {
     const delivery = probes.inspectRunDeliveryState({

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -13,6 +13,10 @@ import {
 } from "../../src/app/health.js";
 import { runHealthCli } from "../../src/cli/health.js";
 import type { ObserverConfig } from "../../src/observer/config.js";
+import {
+  inspectRunState,
+  listFinalRunReports,
+} from "../../src/observer/run-state.js";
 
 const roots: string[] = [];
 const NODE_EXECUTABLE = "/approved/node-22";
@@ -216,6 +220,41 @@ describe("project health", () => {
     expect(serialized).not.toContain(root);
     expect(serialized).not.toContain(NODE_EXECUTABLE);
     expect(serialized).not.toContain(CODEX_ENTRYPOINT);
+  });
+
+  it("accepts a real clean-checkout .state directory without observer records", () => {
+    const root = project();
+    const state = join(root, ".state");
+    mkdirSync(state, { mode: 0o755 });
+    chmodSync(state, 0o755);
+    writeFileSync(join(state, ".gitkeep"), "", "utf8");
+
+    const report = inspectProjectHealth({
+      projectRoot: root,
+      probes: healthyProbes({ inspectRunState, listFinalRunReports }),
+    });
+
+    expect(report.observer.status).toBe("ok");
+    expect(report.observer.invalidStateRecords).toBe(0);
+    expect(report.requiredReady).toBe(true);
+  });
+
+  it("counts one observer scan failure and skips the duplicate final-report scan", () => {
+    const listFinalRunReports = vi.fn(() => []);
+    const report = inspectProjectHealth({
+      projectRoot: project(),
+      probes: healthyProbes({
+        inspectRunState: () => {
+          throw new Error("unsafe observer state /private/path");
+        },
+        listFinalRunReports,
+      }),
+    });
+
+    expect(listFinalRunReports).not.toHaveBeenCalled();
+    expect(report.observer.status).toBe("failed");
+    expect(report.observer.invalidStateRecords).toBe(1);
+    expect(JSON.stringify(report)).not.toContain("/private/path");
   });
 
   it("returns failed for required checks and a nonzero CLI exit code", () => {

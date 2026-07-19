@@ -153,6 +153,33 @@ afterEach(() => {
 });
 
 describe("observer run-state journal", () => {
+  it("treats a clean checkout state directory as uninitialized observer state", () => {
+    const projectRoot = root();
+    const state = join(projectRoot, ".state");
+    mkdirSync(state, { mode: 0o755 });
+    chmodSync(state, 0o755);
+    writeFileSync(join(state, ".gitkeep"), "", "utf8");
+
+    expect(inspectRunState(projectRoot)).toEqual({
+      recoveryPending: 0,
+      invalidRecords: 0,
+    });
+    expect(listFinalRunReports(projectRoot)).toEqual([]);
+    expect(
+      recoverInterruptedRuns({ projectRoot, isProcessAlive: () => false }),
+    ).toEqual({ recovered: [], activeTaskIds: [], invalidRecords: 0 });
+    expect(statSync(state).mode & 0o777).toBe(0o755);
+  });
+
+  it("still rejects unsafe permissions once observer runs state exists", () => {
+    const projectRoot = root();
+    ensureRunsDirectory(projectRoot);
+    chmodSync(join(projectRoot, ".state"), 0o755);
+
+    expectSafeFailure(() => inspectRunState(projectRoot));
+    expectSafeFailure(() => listFinalRunReports(projectRoot));
+  });
+
   it("journals, updates, and recovers an interrupted run exactly once", () => {
     const projectRoot = root();
     const running = startRunRecord({

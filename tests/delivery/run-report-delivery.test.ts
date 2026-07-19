@@ -862,4 +862,69 @@ describe("run report delivery ledger", () => {
       }),
     ).toEqual({ pending: 1, indeterminate: 1, invalid: 1 });
   });
+
+  it("counts retryable and blocked ledgers as pending in both inspection modes", async () => {
+    const root = project();
+    const rejected = report({ runId: "66666666-6666-4666-8666-666666666666" });
+    const loginExpired = report({ runId: "77777777-7777-4777-8777-777777777777" });
+    const retryLimit = report({ runId: "88888888-8888-4888-8888-888888888888" });
+    const image = async () => ({ status: "sent" as const });
+
+    await expect(
+      deliverRunReport({
+        projectRoot: root,
+        report: rejected,
+        sendText: async () => {
+          throw new WechatDeliveryRejectedError();
+        },
+        sendImage: image,
+        now: () => NOW,
+      }),
+    ).rejects.toBeInstanceOf(WechatDeliveryRejectedError);
+    await expect(
+      deliverRunReport({
+        projectRoot: root,
+        report: loginExpired,
+        sendText: async () => {
+          throw new WechatLoginExpiredError();
+        },
+        sendImage: image,
+        now: () => NOW,
+      }),
+    ).rejects.toBeInstanceOf(WechatLoginExpiredError);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await expect(
+        deliverRunReport({
+          projectRoot: root,
+          report: retryLimit,
+          sendText: async () => {
+            throw new WechatDeliveryRejectedError();
+          },
+          sendImage: image,
+          now: () => new Date(NOW.getTime() + attempt),
+        }),
+      ).rejects.toBeInstanceOf(WechatDeliveryRejectedError);
+    }
+
+    expect(runDeliveryDisposition({ projectRoot: root, report: rejected })).toBe(
+      "retryable",
+    );
+    expect(
+      runDeliveryDisposition({ projectRoot: root, report: loginExpired }),
+    ).toBe("blocked");
+    expect(runDeliveryDisposition({ projectRoot: root, report: retryLimit })).toBe(
+      "blocked",
+    );
+    expect(inspectRunDeliveryState({ projectRoot: root })).toEqual({
+      pending: 3,
+      indeterminate: 0,
+      invalid: 0,
+    });
+    expect(
+      inspectRunDeliveryState({
+        projectRoot: root,
+        reports: [rejected, loginExpired, retryLimit],
+      }),
+    ).toEqual({ pending: 3, indeterminate: 0, invalid: 0 });
+  });
 });

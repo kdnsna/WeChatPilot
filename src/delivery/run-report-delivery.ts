@@ -992,7 +992,7 @@ export function inspectRunDeliveryState(options: {
         pending += 1;
       } else if (current.ledger !== undefined) {
         const state = disposition(current.ledger);
-        if (state === "retryable") {
+        if (state === "retryable" || state === "blocked") {
           pending += 1;
         } else if (state === "indeterminate") {
           indeterminate += 1;
@@ -1028,7 +1028,7 @@ export function inspectRunDeliveryState(options: {
       continue;
     }
     const state = disposition(current.ledger);
-    if (state === "retryable") {
+    if (state === "retryable" || state === "blocked") {
       pending += 1;
     } else if (state === "indeterminate") {
       indeterminate += 1;

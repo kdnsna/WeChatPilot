@@ -183,6 +183,16 @@ function createPrivateRunsDirectory(projectRoot: string): string {
 
 function existingPrivateRunsDirectory(projectRoot: string): string | null {
   const directories = stateDirectories(projectRoot);
+  const runsDirectory = directories[directories.length - 1] as string;
+  assertNoSymlinkComponents(projectRoot, runsDirectory);
+  try {
+    lstatSync(runsDirectory);
+  } catch (error) {
+    if (isMissing(error)) {
+      return null;
+    }
+    throw error;
+  }
   for (const directory of directories) {
     assertNoSymlinkComponents(projectRoot, directory);
     let metadata;
@@ -202,7 +212,7 @@ function existingPrivateRunsDirectory(projectRoot: string): string | null {
       throw safeError();
     }
   }
-  return directories[directories.length - 1] as string;
+  return runsDirectory;
 }
 
 function recordPath(projectRoot: string, runId: string): string {

@@ -7,6 +7,44 @@ import { runSendRunReportTestCli } from "../../src/cli/send-run-report-test.js";
 const projectRoot = resolve(process.cwd());
 
 describe("LaunchAgent lifecycle scripts", () => {
+  it("delays native report renderer loading until guarded runtime probes", () => {
+    const health = readFileSync(resolve(projectRoot, "src", "app", "health.ts"), "utf8");
+    const testCard = readFileSync(
+      resolve(projectRoot, "src", "cli", "send-run-report-test.ts"),
+      "utf8",
+    );
+
+    expect(health).not.toMatch(/import\s+\{\s*Resvg\s*\}\s+from/u);
+    expect(health).toContain('createRequire(import.meta.url)');
+    expect(testCard).not.toMatch(
+      /import\s+\{[^}]*renderReportCard[^}]*\}\s+from\s+"\.\.\/observer\/report-card\.js"/u,
+    );
+    expect(testCard).toContain('await import("../observer/report-card.js")');
+  });
+
+  it("sanitizes a delayed renderer loading failure", async () => {
+    const stdout = vi.fn();
+    const stderr = vi.fn();
+    const leakedPath = "/private/native/resvg.node";
+
+    await expect(
+      runSendRunReportTestCli([], { stdout, stderr }, {
+        send: async () => {
+          throw new Error(`Cannot load ${leakedPath}`);
+        },
+      }),
+    ).resolves.toBe(1);
+    expect(stdout).not.toHaveBeenCalled();
+    const output = stderr.mock.calls.flat().join("");
+    expect(output).toBe(
+      `${JSON.stringify({
+        error: "SendRunReportTestError",
+        message: "inspect project logs",
+      })}\n`,
+    );
+    expect(output).not.toContain(leakedPath);
+  });
+
   it("routes the scheduled script through the fixed observer job without remote control", () => {
     const path = resolve(projectRoot, "scripts", "run-scheduled.sh");
     const script = readFileSync(path, "utf8");
