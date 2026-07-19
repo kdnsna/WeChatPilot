@@ -1,0 +1,31 @@
+name: 功能建议
+description: 提议可验证、边界清晰的新能力
+title: "[Feature] "
+labels: [enhancement, triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 验收指标
+      description: 说明如何用真实数据或测试判断完成。
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundary
+    attributes:
+      label: 边界确认
+      options:
+        - label: 不要求微信远程执行命令或扩大 Codex 权限
+          required: true

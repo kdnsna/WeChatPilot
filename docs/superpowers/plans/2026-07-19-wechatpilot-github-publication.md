@@ -30,7 +30,7 @@
 - Create: `tests/project/branding.test.ts`
 - Test: `tests/project/branding.test.ts`
 
-- [ ] **Step 1: Write the failing branding test**
+- [x] **Step 1: Write the failing branding test**
 
 ```ts
 import { readFile } from 'node:fs/promises';
@@ -63,7 +63,7 @@ describe('WeChatPilot public identity', () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused test and verify the old branding fails**
+- [x] **Step 2: Run the focused test and verify the old branding fails**
 
 Run:
 
@@ -83,7 +83,7 @@ Expected: FAIL because `README.md`, `package.json`, and the issue contact link s
 - Modify: `.github/ISSUE_TEMPLATE/config.yml`
 - Test: `tests/project/branding.test.ts`
 
-- [ ] **Step 1: Replace the README title and opening positioning**
+- [x] **Step 1: Replace the README title and opening positioning**
 
 Use this opening while retaining all existing operational and security documentation below it:
 
@@ -98,7 +98,7 @@ WeChatPilot 是一个运行在本机的微信 AI 自动化平台。当前内置�
 > WeChatPilot 是独立、非微信或腾讯官方项目，与微信及腾讯不存在隶属、授权或背书关系。
 ```
 
-- [ ] **Step 2: Add private-package repository metadata**
+- [x] **Step 2: Add private-package repository metadata**
 
 Set these top-level fields in `package.json` without changing runtime scripts or dependency versions:
 
@@ -119,7 +119,7 @@ Set these top-level fields in `package.json` without changing runtime scripts or
 }
 ```
 
-- [ ] **Step 3: Correct the issue-template health-check link**
+- [x] **Step 3: Correct the issue-template health-check link**
 
 ```yaml
 blank_issues_enabled: false
@@ -129,7 +129,7 @@ contact_links:
     about: 提交 Issue 前先运行 README 中的健康检查。
 ```
 
-- [ ] **Step 4: Run the focused test and verify it passes**
+- [x] **Step 4: Run the focused test and verify it passes**
 
 Run the Task 1 command again.
 
@@ -145,7 +145,7 @@ Expected: 1 test file passed; the public brand is WeChatPilot and the deployed L
 - Add: `.github/ISSUE_TEMPLATE/feature_request.yml`
 - Add: `.github/ISSUE_TEMPLATE/config.yml`
 
-- [ ] **Step 1: Parse every YAML control file with the installed YAML library**
+- [x] **Step 1: Parse every YAML control file with the installed YAML library**
 
 Run:
 
@@ -165,7 +165,7 @@ console.log("github-yaml: ok");
 
 Expected: `github-yaml: ok`.
 
-- [ ] **Step 2: Confirm CI is least-privilege and pinned**
+- [x] **Step 2: Confirm CI is least-privilege and pinned**
 
 Run:
 
@@ -181,7 +181,7 @@ Expected: all policies and commands are found; no floating action tag appears.
 - Test: all root and vendor tests
 - Inspect: all tracked and untracked publication files
 
-- [ ] **Step 1: Run the complete local verification suite**
+- [x] **Step 1: Run the complete local verification suite**
 
 Run:
 
@@ -199,7 +199,7 @@ PATH=/opt/homebrew/opt/node@22/bin:/usr/bin:/bin \
 
 Expected: root tests, type checking, build, and all 81 pinned-vendor tests pass.
 
-- [ ] **Step 2: Verify the submodule pin and LaunchAgent syntax**
+- [x] **Step 2: Verify the submodule pin and LaunchAgent syntax**
 
 Run:
 
@@ -210,7 +210,7 @@ git -C vendor/cli-in-wechat rev-parse HEAD
 
 Expected: commit `75d7db9338e133080fef9914b92ceb5e3ebd0dfc` and `OK`.
 
-- [ ] **Step 3: Inspect ignored and tracked paths for sensitive artifacts**
+- [x] **Step 3: Inspect ignored and tracked paths for sensitive artifacts**
 
 Run:
 
