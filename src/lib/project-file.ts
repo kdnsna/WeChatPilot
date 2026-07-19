@@ -9,7 +9,7 @@ import {
   readFileSync,
   renameSync,
   unlinkSync,
-  writeFileSync,
+  writeSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, basename, join } from "node:path";
@@ -58,10 +58,10 @@ export function readProjectText(
   }
 }
 
-export function writeProjectTextAtomic(
+export function writeProjectBytesAtomic(
   projectRoot: string,
   filePath: string,
-  content: string,
+  content: Uint8Array,
 ): void {
   const target = safePath(projectRoot, filePath);
   const parent = dirname(target);
@@ -86,7 +86,19 @@ export function writeProjectTextAtomic(
       0o600,
     );
     temporaryExists = true;
-    writeFileSync(descriptor, content, "utf8");
+    let written = 0;
+    while (written < content.byteLength) {
+      const bytesWritten = writeSync(
+        descriptor,
+        content,
+        written,
+        content.byteLength - written,
+      );
+      if (bytesWritten === 0) {
+        throw new Error("Unable to complete private project file write");
+      }
+      written += bytesWritten;
+    }
     fsyncSync(descriptor);
     closeSync(descriptor);
     descriptor = undefined;
@@ -105,4 +117,12 @@ export function writeProjectTextAtomic(
       }
     }
   }
+}
+
+export function writeProjectTextAtomic(
+  projectRoot: string,
+  filePath: string,
+  content: string,
+): void {
+  writeProjectBytesAtomic(projectRoot, filePath, Buffer.from(content, "utf8"));
 }
