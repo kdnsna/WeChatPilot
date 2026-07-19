@@ -228,7 +228,7 @@ Expected: runtime paths are ignored; no tracked private artifact appears; any so
 **Files:**
 - Stage: `README.md`, `package.json`, `.github/`, `tests/project/branding.test.ts`, and this plan
 
-- [ ] **Step 1: Rename the initial branch and stage only approved files**
+- [x] **Step 1: Rename the initial branch and stage only approved files**
 
 Run:
 
@@ -241,7 +241,7 @@ git status --short --branch
 
 Expected: branch `main`; only the approved WeChatPilot and repository-management files are staged.
 
-- [ ] **Step 2: Commit the publication changes**
+- [x] **Step 2: Commit the publication changes**
 
 Run:
 
