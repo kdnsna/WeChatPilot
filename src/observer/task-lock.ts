@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   closeSync,
   constants,
+  fchmodSync,
   fstatSync,
   fsyncSync,
   linkSync,
@@ -256,11 +257,17 @@ export async function acquireObserverTaskLock(
         (constants.O_NOFOLLOW ?? 0),
       PRIVATE_FILE_MODE,
     );
+    const initialMetadata = fstatSync(descriptor);
+    ownerIdentity = { dev: initialMetadata.dev, ino: initialMetadata.ino };
+    fchmodSync(descriptor, PRIVATE_FILE_MODE);
     const metadata = fstatSync(descriptor);
-    if (!metadata.isFile() || (metadata.mode & 0o777) !== PRIVATE_FILE_MODE) {
+    if (
+      !metadata.isFile() ||
+      (metadata.mode & 0o777) !== PRIVATE_FILE_MODE ||
+      !sameIdentity(metadata, ownerIdentity)
+    ) {
       throw safeError();
     }
-    ownerIdentity = { dev: metadata.dev, ino: metadata.ino };
     writeOwner(descriptor, `${JSON.stringify(record)}\n`);
     syncOwner(descriptor);
     closeSync(descriptor);

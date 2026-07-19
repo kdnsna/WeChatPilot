@@ -6,6 +6,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -163,6 +164,35 @@ describe("observer task lock", () => {
 
       expect(readdirSync(join(root, ".state", "locks"))).toEqual([]);
     }
+  });
+
+  it("publishes a 0600 canonical lock even under a restrictive process umask", async () => {
+    const root = project();
+    const directory = join(root, ".state", "locks");
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    chmodSync(join(root, ".state"), 0o700);
+    chmodSync(directory, 0o700);
+
+    let lock: Awaited<ReturnType<typeof acquireObserverTaskLock>> | undefined;
+    let failure: unknown;
+    const previousUmask = process.umask(0o777);
+    try {
+      lock = await acquireObserverTaskLock({
+        projectRoot: root,
+        taskId: "daily-tech-digest",
+      });
+    } catch (error) {
+      failure = error;
+    } finally {
+      process.umask(previousUmask);
+    }
+
+    expect(failure).toBeUndefined();
+    expect(lock).toBeDefined();
+    expect(statSync(lockPath(root)).mode & 0o777).toBe(0o600);
+    expect(readdirSync(directory)).toEqual(["observer-daily-tech-digest.lock"]);
+    await lock?.release();
+    expect(readdirSync(directory)).toEqual([]);
   });
 
   it("never removes a replacement lock during release", async () => {
