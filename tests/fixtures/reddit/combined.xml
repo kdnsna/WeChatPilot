@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>reddit.com: combined fixture</title>
+  <link rel="self" href="https://www.reddit.com/r/technology+MachineLearning/.rss" />
+  <updated>2026-07-18T03:30:00Z</updated>
+  <entry>
+    <author>
+      <name>/u/reddit_author</name>
+      <uri>https://www.reddit.com/user/reddit_author</uri>
+    </author>
+    <category term="MachineLearning" label="r/MachineLearning" />
+    <content type="html">&lt;div&gt;&lt;p&gt;A &lt;strong&gt;verified&lt;/strong&gt; research summary.&lt;/p&gt;&lt;script&gt;reddit-script-secret()&lt;/script&gt; token=reddit-summary-secret&lt;/div&gt;</content>
+    <id>t3_fixture123</id>
+    <link href="https://reddit-user:reddit-password@www.reddit.com/r/MachineLearning/comments/fixture123/research_update/?session=reddit-query-secret&amp;sort=new" />
+    <updated>2026-07-18T03:15:00Z</updated>
+    <title><![CDATA[<b>Research</b> update]]></title>
+  </entry>
+  <entry>
+    <author><name>/u/invalid_author</name></author>
+    <content type="html">&lt;p&gt;Invalid URL entry.&lt;/p&gt;</content>
+    <id>t3_invalid</id>
+    <link href="javascript:alert(1)" />
+    <updated>2026-07-18T02:00:00Z</updated>
+    <title>Unsupported URL</title>
+  </entry>
+</feed>

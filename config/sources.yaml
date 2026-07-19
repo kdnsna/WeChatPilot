@@ -1,0 +1,163 @@
+version: 1
+sources:
+  hackerNews:
+    kind: hacker-news
+    tier: core
+    weight: 1.0
+    endpoints:
+      top: https://hacker-news.firebaseio.com/v0/topstories.json
+      new: https://hacker-news.firebaseio.com/v0/newstories.json
+  v2ex:
+    kind: v2ex
+    tier: core
+    weight: 0.9
+    endpoint: https://www.v2ex.com/api/topics/hot.json
+    technicalNodes:
+      - programmer
+      - programming
+      - python
+      - java
+      - php
+      - go
+      - javascript
+      - nodejs
+      - cpp
+      - rust
+      - swift
+      - typescript
+      - linux
+      - android
+      - github
+      - vscode
+      - cloud
+      - server
+      - mysql
+      - docker
+      - kubernetes
+      - devops
+      - ml
+      - tensorflow
+      - nlp
+      - cuda
+      - pytorch
+      - openai
+      - claude
+      - localllm
+    technicalKeywords:
+      - 人工智能
+      - 大模型
+      - 机器学习
+      - 深度学习
+      - LLM
+      - GPT
+      - Claude
+      - OpenAI
+      - Codex
+      - Gemini
+      - 编程
+      - 开源
+      - GitHub
+      - Python
+      - JavaScript
+      - TypeScript
+      - Rust
+      - Golang
+      - Node.js
+      - Linux
+      - Docker
+      - Kubernetes
+      - 云计算
+      - 数据库
+      - API
+  github:
+    kind: github-search
+    tier: core
+    weight: 1.0
+    endpoint: https://api.github.com/search/repositories
+    query: "created:>={windowStartDate}"
+    sort: stars
+    order: desc
+    lookbackDays: 30
+    minimumStars: 20
+    itemLimit: 50
+  rss:
+    kind: rss
+    tier: core
+    weight: 0.9
+    feeds:
+      - id: techcrunch
+        name: TechCrunch
+        url: https://techcrunch.com/feed/
+        tier: core
+        weight: 0.9
+      - id: the-verge
+        name: The Verge
+        url: https://www.theverge.com/rss/index.xml
+        tier: core
+        weight: 0.9
+      - id: ars-technica
+        name: Ars Technica
+        url: https://feeds.arstechnica.com/arstechnica/index
+        tier: core
+        weight: 1.0
+      - id: wired
+        name: WIRED
+        url: https://www.wired.com/feed/rss
+        tier: core
+        weight: 0.9
+      - id: mit-technology-review
+        name: MIT Technology Review
+        url: https://www.technologyreview.com/feed/
+        tier: core
+        weight: 1.0
+      - id: the-register
+        name: The Register
+        url: https://www.theregister.com/headlines.atom
+        tier: core
+        weight: 0.9
+      - id: openai
+        name: OpenAI
+        url: https://openai.com/news/rss.xml
+        tier: core
+        weight: 1.0
+      - id: deepmind
+        name: Google DeepMind
+        url: https://deepmind.google/blog/rss.xml
+        tier: core
+        weight: 1.0
+      - id: google-ai
+        name: Google AI
+        url: https://blog.google/innovation-and-ai/technology/ai/rss/
+        tier: core
+        weight: 1.0
+      - id: microsoft-ai
+        name: Microsoft AI
+        url: https://microsoft.ai/feed/
+        tier: core
+        weight: 1.0
+      - id: hugging-face
+        name: Hugging Face
+        url: https://huggingface.co/blog/feed.xml
+        tier: core
+        weight: 1.0
+      - id: mistral-ai
+        name: Mistral AI
+        url: https://mistral.ai/rss.xml
+        tier: core
+        weight: 1.0
+      - id: nvidia
+        name: NVIDIA
+        url: https://blogs.nvidia.com/feed/
+        tier: core
+        weight: 1.0
+  reddit:
+    kind: reddit-rss
+    tier: optional
+    weight: 0.7
+    subreddits:
+      - technology
+      - programming
+      - MachineLearning
+      - LocalLLaMA
+      - artificial
+    url: https://www.reddit.com/r/technology+programming+MachineLearning+LocalLLaMA+artificial/.rss

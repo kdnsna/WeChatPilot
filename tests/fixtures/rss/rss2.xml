@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Fixture RSS 2.0</title>
+    <link>https://news.example.test/</link>
+    <description>Fixture feed</description>
+    <item>
+      <title><![CDATA[<b>AI &amp; agents</b> token=rss-title-secret]]></title>
+      <link>https://feed-user:feed-password@news.example.test/story/one?access_token=rss-query-secret&amp;view=full</link>
+      <dc:creator>Reporter One</dc:creator>
+      <pubDate>Sat, 18 Jul 2026 04:00:00 GMT</pubDate>
+      <description><![CDATA[
+        <p>A <strong>useful</strong> summary.</p>
+        <script>steal-rss-secret()</script>
+        context_token=rss-summary-secret
+      ]]></description>
+      <guid>fixture-rss-one</guid>
+    </item>
+    <item>
+      <title>Unsupported link</title>
+      <link>javascript:alert(1)</link>
+      <pubDate>Sat, 18 Jul 2026 03:00:00 GMT</pubDate>
+      <description>Must be skipped.</description>
+      <guid>fixture-rss-invalid</guid>
+    </item>
+  </channel>
+</rss>

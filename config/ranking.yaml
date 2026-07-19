@@ -1,0 +1,26 @@
+version: 1
+formula:
+  weights:
+    engagement: 0.24
+    popularity: 0.20
+    velocity: 0.18
+    recency: 0.18
+    crossSource: 0.12
+    sourceQuality: 0.08
+recency:
+  halfLifeHours: 12
+history:
+  lookbackDays: 7
+  repeatFactor: 0.35
+crossSource:
+  confirmationCap: 4
+sourceWeights:
+  hackerNews: 1.0
+  v2ex: 0.9
+  github: 1.0
+  rss: 0.9
+  reddit: 0.7
+clustering:
+  titleTokenSimilarityThreshold: 0.72
+  titleCharacterBigramThreshold: 0.78
+  stripTrackingParameters: true

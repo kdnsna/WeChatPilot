@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Fixture Atom</title>
+  <link href="https://atom.example.test/" rel="alternate" />
+  <link href="https://atom.example.test/feed.xml" rel="self" />
+  <updated>2026-07-18T05:30:00Z</updated>
+  <entry>
+    <title><![CDATA[Atom <em>release</em> &amp; notes]]></title>
+    <link href="/stories/atom-release?client_secret=atom-query-secret&amp;view=full" rel="alternate" />
+    <id>tag:atom.example.test,2026:release</id>
+    <updated>2026-07-18T05:15:00Z</updated>
+    <author>
+      <name>Atom Author</name>
+    </author>
+    <summary type="html">&lt;p&gt;Atom &lt;strong&gt;summary&lt;/strong&gt;.&lt;/p&gt; api_key=atom-summary-secret</summary>
+  </entry>
+</feed>

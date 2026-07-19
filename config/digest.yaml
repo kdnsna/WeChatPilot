@@ -1,0 +1,79 @@
+version: 1
+timezone: Asia/Shanghai
+windowHours: 24
+quotas:
+  community: 3
+  news: 5
+  github: 3
+  deepReading: 2
+length:
+  unit: chinese-characters
+  min: 2000
+  max: 3000
+codex:
+  version: 0.144.4
+  nodeExecutable: /opt/homebrew/opt/node@22/bin/node
+  javascriptEntrypoint: /opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js
+  globalArgs:
+    - --search
+    - --sandbox
+    - read-only
+    - --ask-for-approval
+    - never
+    - --cd
+    - "{projectRoot}"
+    - --disable
+    - apps
+    - --disable
+    - plugins
+    - --disable
+    - hooks
+    - --disable
+    - browser_use
+    - --disable
+    - computer_use
+    - --disable
+    - in_app_browser
+    - --disable
+    - shell_tool
+    - --disable
+    - unified_exec
+    - --disable
+    - shell_snapshot
+    - --disable
+    - multi_agent
+    - --disable
+    - goals
+    - --disable
+    - code_mode_host
+    - --disable
+    - workspace_dependencies
+    - --disable
+    - chronicle
+    - --disable
+    - memories
+    - --disable
+    - image_generation
+    - --disable
+    - tool_suggest
+    - --disable
+    - auth_elicitation
+  command: exec
+  execArgs:
+    - --ephemeral
+    - --ignore-user-config
+    - --ignore-rules
+    - --color
+    - never
+    - --output-schema
+    - "{projectRoot}/config/digest-output.schema.json"
+    - "-"
+  stdinOnly: true
+  forbiddenArgs:
+    - --dangerously-bypass-approvals-and-sandbox
+    - --dangerously-bypass-hook-trust
+    - --yolo
+    - --add-dir
+    - workspace-write
+    - danger-full-access
+    - --skip-git-repo-check

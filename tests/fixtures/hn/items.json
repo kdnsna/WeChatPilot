@@ -1,0 +1,77 @@
+{
+  "101": {
+    "id": 101,
+    "type": "story",
+    "by": "alice",
+    "time": 1784372400,
+    "title": "Node 22 ships a safer permission model",
+    "url": "https://example.test/node-22-permissions",
+    "score": 42,
+    "descendants": 7
+  },
+  "102": {
+    "id": 102,
+    "type": "story",
+    "by": "bob",
+    "time": 1784368800,
+    "title": "Ask HN: How do you isolate local agents?",
+    "text": "<p>Looking for practical isolation patterns &amp; verification loops.</p>",
+    "score": 12,
+    "descendants": 3
+  },
+  "103": {
+    "id": 103,
+    "type": "story",
+    "by": "carol",
+    "time": 1784365200,
+    "title": "This dead story must not appear",
+    "dead": true,
+    "score": 1,
+    "descendants": 0
+  },
+  "104": {
+    "id": 104,
+    "type": "story",
+    "by": "dave",
+    "time": 1784289599,
+    "title": "This story is just outside the activity window",
+    "url": "https://example.test/old-story",
+    "score": 99,
+    "descendants": 20
+  },
+  "105": {
+    "id": 105,
+    "type": "story",
+    "by": "erin",
+    "time": 1784361600,
+    "score": 5,
+    "descendants": 1
+  },
+  "106": {
+    "id": 106,
+    "type": "story",
+    "by": "frank",
+    "time": 1784358000,
+    "title": "This deleted story must not appear",
+    "deleted": true,
+    "score": 2,
+    "descendants": 1
+  },
+  "107": {
+    "id": 107,
+    "type": "story",
+    "by": "grace",
+    "time": 1784365200,
+    "title": "Show HN: A bounded worker pool",
+    "url": "https://example.test/bounded-worker-pool",
+    "score": 18,
+    "descendants": 5
+  },
+  "108": {
+    "id": 108,
+    "type": "job",
+    "time": 1784361600,
+    "title": "A job item is not a story",
+    "url": "https://example.test/job"
+  }
+}

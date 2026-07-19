@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "upstreamCommit": "75d7db9338e133080fef9914b92ceb5e3ebd0dfc",
+  "artifacts": [
+    {
+      "path": "ilink/auth.js",
+      "bytes": 3140,
+      "sha256": "0743aeb829d774a3f67b277df757db234750d6b3ce9347eac4465d29691da707"
+    },
+    {
+      "path": "utils/http.js",
+      "bytes": 10625,
+      "sha256": "1cd46b0e897aec2b58729403ded4380c4d9856a2e05697fc2f8f87489a6b0dfc"
+    },
+    {
+      "path": "utils/logger.js",
+      "bytes": 1066,
+      "sha256": "c5304c6c3090e87d40e60abdd3a3152b7dcbb7dcc21c1e86dca077900db614e6"
+    },
+    {
+      "path": "utils/crypto.js",
+      "bytes": 1680,
+      "sha256": "f8afc19ebf117db77ccf9e5654ae63161027be4c4e9660c67cdf8c5f8d800e4c"
+    }
+  ]
+}

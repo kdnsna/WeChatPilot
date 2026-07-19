@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "date", "digest", "sourceUrls"],
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "date": {
+      "type": "string"
+    },
+    "digest": {
+      "type": "string"
+    },
+    "sourceUrls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
