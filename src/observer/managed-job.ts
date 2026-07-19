@@ -442,7 +442,7 @@ export async function runManagedJob(
           const adapted = parseScheduledDigestResult(
             Buffer.concat(stdoutChunks).toString("utf8"),
           );
-          finish(adapted.status, adapted.draft);
+          finish(adapted.statusOverride, adapted.draft);
         } catch {
           finish("failed", failureDraft("invalid-result"));
         }

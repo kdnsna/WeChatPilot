@@ -16,7 +16,7 @@ describe("parseScheduledDigestResult", () => {
         })}\n`,
       ),
     ).toEqual({
-      status: "success",
+      statusOverride: "success",
       draft: {
         version: 1,
         summary: ["今日日报已生成并发送"],
@@ -37,10 +37,13 @@ describe("parseScheduledDigestResult", () => {
       parseScheduledDigestResult(
         JSON.stringify({ ok: true, status: "not-due", date: "2026-07-20" }),
       ),
-    ).toMatchObject({
-      status: "skipped",
+    ).toEqual({
+      statusOverride: "skipped",
       draft: {
+        version: 1,
+        summary: ["尚未到每日发送时间，本次跳过"],
         metrics: [{ label: "日期", value: "2026-07-20" }],
+        failure: null,
         artifacts: [],
       },
     });
@@ -53,13 +56,16 @@ describe("parseScheduledDigestResult", () => {
           jobAttempt: 2,
         }),
       ),
-    ).toMatchObject({
-      status: "skipped",
+    ).toEqual({
+      statusOverride: "skipped",
       draft: {
+        version: 1,
+        summary: ["今日日报已发送，本次跳过"],
         metrics: [
           { label: "日期", value: "2026-07-20" },
           { label: "任务尝试", value: "2" },
         ],
+        failure: null,
         artifacts: [],
       },
     });

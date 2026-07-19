@@ -57,7 +57,7 @@ const ScheduledDigestResultSchema = z.discriminatedUnion("status", [
 ]);
 
 export interface JobAdapterResult {
-  readonly status: "success" | "skipped";
+  readonly statusOverride: "success" | "skipped";
   readonly draft: RunReportDraft;
 }
 
@@ -105,7 +105,7 @@ export function parseScheduledDigestResult(stdout: string): JobAdapterResult {
 
     if (result.status === "sent") {
       return {
-        status: "success",
+        statusOverride: "success",
         draft: draft("今日日报已生成并发送", [
           dateMetric,
           { label: "消息分段", value: String(result.chunks) },
@@ -116,7 +116,7 @@ export function parseScheduledDigestResult(stdout: string): JobAdapterResult {
     }
     if (result.status === "already-sent") {
       return {
-        status: "skipped",
+        statusOverride: "skipped",
         draft: draft("今日日报已发送，本次跳过", [
           dateMetric,
           { label: "任务尝试", value: String(result.jobAttempt) },
@@ -124,7 +124,7 @@ export function parseScheduledDigestResult(stdout: string): JobAdapterResult {
       };
     }
     return {
-      status: "skipped",
+      statusOverride: "skipped",
       draft: draft("尚未到每日发送时间，本次跳过", [dateMetric]),
     };
   } catch {
