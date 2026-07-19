@@ -5,18 +5,22 @@ import {
   constants,
   fstatSync,
   fsyncSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
+  readSync,
+  renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 import { z } from "zod";
 
-import { readProjectText, writeProjectTextAtomic } from "../lib/project-file.js";
+import { writeProjectTextAtomic } from "../lib/project-file.js";
 import {
   assertNoSymlinkComponents,
   resolveProjectPath,
@@ -151,6 +155,13 @@ const LockRecordSchema = z.object({
 
 type LockRecord = z.infer<typeof LockRecordSchema>;
 
+const GuardRecordSchema = LockRecordSchema.extend({
+  dev: z.number().int().nonnegative().safe(),
+  ino: z.number().int().nonnegative().safe(),
+}).strict();
+
+type GuardRecord = z.infer<typeof GuardRecordSchema>;
+
 const INDETERMINATE_MESSAGE =
   "运行报告存在无法确认的发送结果；为避免重复，已停止自动发送";
 
@@ -273,15 +284,6 @@ function ensureStateDirectories(projectRoot: string): void {
   ensurePrivateDirectory(projectRoot, ".state", "locks");
 }
 
-function privateRegularFile(projectRoot: string, filePath: string): boolean {
-  try {
-    const stat = lstatSync(assertNoSymlinkComponents(projectRoot, filePath));
-    return stat.isFile() && !stat.isSymbolicLink() && (stat.mode & 0o077) === 0;
-  } catch {
-    return false;
-  }
-}
-
 function readLedger(
   projectRoot: string,
   runId: string,
@@ -293,17 +295,83 @@ function readLedger(
   } catch {
     return { kind: "invalid" };
   }
-  let raw: string | null;
+  let before: ReturnType<typeof lstatSync>;
   try {
-    raw = readProjectText(projectRoot, filePath, MAX_LEDGER_BYTES);
+    before = lstatSync(assertNoSymlinkComponents(projectRoot, filePath));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { kind: "missing" };
+    }
+    return { kind: "invalid" };
+  }
+  if (
+    !before.isFile() ||
+    before.isSymbolicLink() ||
+    (before.mode & 0o777) !== 0o600 ||
+    before.size <= 0 ||
+    before.size > MAX_LEDGER_BYTES
+  ) {
+    return { kind: "invalid" };
+  }
+  let descriptor: number | undefined;
+  let raw: string;
+  try {
+    descriptor = openSync(
+      filePath,
+      constants.O_RDONLY |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0),
+    );
+    const opened = fstatSync(descriptor);
+    if (
+      !sameFile(opened, before) ||
+      !opened.isFile() ||
+      (opened.mode & 0o777) !== 0o600 ||
+      opened.size !== before.size
+    ) {
+      return { kind: "invalid" };
+    }
+    const buffer = Buffer.alloc(MAX_LEDGER_BYTES + 1);
+    let total = 0;
+    while (total < buffer.byteLength) {
+      const count = readSync(
+        descriptor,
+        buffer,
+        total,
+        buffer.byteLength - total,
+        null,
+      );
+      if (count === 0) {
+        break;
+      }
+      total += count;
+    }
+    const after = fstatSync(descriptor);
+    const finalPath = lstatSync(assertNoSymlinkComponents(projectRoot, filePath));
+    if (
+      total > MAX_LEDGER_BYTES ||
+      total !== opened.size ||
+      !sameFile(after, opened) ||
+      !sameFile(finalPath, opened) ||
+      !after.isFile() ||
+      !finalPath.isFile() ||
+      finalPath.isSymbolicLink() ||
+      (after.mode & 0o777) !== 0o600 ||
+      (finalPath.mode & 0o777) !== 0o600 ||
+      after.size !== opened.size ||
+      finalPath.size !== opened.size ||
+      after.mtimeMs !== opened.mtimeMs ||
+      after.ctimeMs !== opened.ctimeMs
+    ) {
+      return { kind: "invalid" };
+    }
+    raw = buffer.subarray(0, total).toString("utf8");
   } catch {
     return { kind: "invalid" };
-  }
-  if (raw === null) {
-    return { kind: "missing" };
-  }
-  if (!privateRegularFile(projectRoot, filePath)) {
-    return { kind: "invalid" };
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
   }
   let value: unknown;
   try {
@@ -498,6 +566,242 @@ function removeStaleLock(
   }
 }
 
+function acquisitionGuardPath(filePath: string): string {
+  return `${filePath}.acquire`;
+}
+
+function guardOwnerPath(guardPath: string, nonce: string): string {
+  return `${guardPath}.owner-${nonce}`;
+}
+
+function guardClaimPath(guardPath: string, nonce: string): string {
+  return `${guardPath}.claim-${nonce}-${randomUUID()}`;
+}
+
+function removeOwnedPath(
+  projectRoot: string,
+  filePath: string,
+  expected: { readonly dev: number; readonly ino: number },
+): void {
+  try {
+    const current = lstatSync(assertNoSymlinkComponents(projectRoot, filePath));
+    if (current.isFile() && !current.isSymbolicLink() && sameFile(current, expected)) {
+      unlinkSync(filePath);
+    }
+  } catch {
+    // Missing or replaced paths are deliberately left untouched.
+  }
+}
+
+function readGuard(
+  projectRoot: string,
+  guardPath: string,
+): {
+  readonly record: GuardRecord;
+  readonly identity: { readonly dev: number; readonly ino: number };
+} {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(
+      assertNoSymlinkComponents(projectRoot, guardPath),
+      constants.O_RDONLY |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0),
+    );
+    const stat = fstatSync(descriptor);
+    if (
+      !stat.isFile() ||
+      (stat.mode & 0o777) !== 0o600 ||
+      stat.size <= 0 ||
+      stat.size > MAX_LOCK_BYTES
+    ) {
+      throw new RunReportDeliveryBusyError();
+    }
+    const parsed = GuardRecordSchema.safeParse(
+      JSON.parse(readFileSync(descriptor, "utf8")) as unknown,
+    );
+    const finalStat = fstatSync(descriptor);
+    const finalPath = lstatSync(assertNoSymlinkComponents(projectRoot, guardPath));
+    if (
+      !parsed.success ||
+      parsed.data.dev !== stat.dev ||
+      parsed.data.ino !== stat.ino ||
+      !sameFile(finalStat, stat) ||
+      !sameFile(finalPath, stat) ||
+      finalStat.size !== stat.size ||
+      finalStat.mtimeMs !== stat.mtimeMs ||
+      finalStat.ctimeMs !== stat.ctimeMs
+    ) {
+      throw new RunReportDeliveryBusyError();
+    }
+    return {
+      record: parsed.data,
+      identity: { dev: stat.dev, ino: stat.ino },
+    };
+  } catch (error) {
+    if (error instanceof RunReportDeliveryBusyError) {
+      throw error;
+    }
+    throw new RunReportDeliveryBusyError();
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
+  }
+}
+
+function findGuardRecoverySource(
+  projectRoot: string,
+  guardPath: string,
+  record: GuardRecord,
+  expected: { readonly dev: number; readonly ino: number },
+): string {
+  const ownerName = basename(guardOwnerPath(guardPath, record.nonce));
+  const claimPrefix = `${basename(guardPath)}.claim-${record.nonce}-`;
+  const candidates = readdirSync(dirname(guardPath))
+    .filter((entry) => entry === ownerName || entry.startsWith(claimPrefix))
+    .map((entry) => join(dirname(guardPath), entry))
+    .filter((candidate) => {
+      try {
+        const stat = lstatSync(assertNoSymlinkComponents(projectRoot, candidate));
+        return stat.isFile() && !stat.isSymbolicLink() && sameFile(stat, expected);
+      } catch {
+        return false;
+      }
+    });
+  if (candidates.length !== 1) {
+    throw new RunReportDeliveryBusyError();
+  }
+  return candidates[0]!;
+}
+
+function recoverGuard(
+  projectRoot: string,
+  guardPath: string,
+  current: {
+    readonly record: GuardRecord;
+    readonly identity: { readonly dev: number; readonly ino: number };
+  },
+): boolean {
+  let source: string;
+  try {
+    source = findGuardRecoverySource(
+      projectRoot,
+      guardPath,
+      current.record,
+      current.identity,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+  const claim = guardClaimPath(guardPath, current.record.nonce);
+  try {
+    renameSync(source, claim);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw new RunReportDeliveryBusyError();
+  }
+  try {
+    const claimed = lstatSync(assertNoSymlinkComponents(projectRoot, claim));
+    const fixed = lstatSync(assertNoSymlinkComponents(projectRoot, guardPath));
+    if (
+      !claimed.isFile() ||
+      claimed.isSymbolicLink() ||
+      !sameFile(claimed, current.identity) ||
+      !fixed.isFile() ||
+      fixed.isSymbolicLink() ||
+      !sameFile(fixed, current.identity)
+    ) {
+      throw new RunReportDeliveryBusyError();
+    }
+    unlinkSync(guardPath);
+    return true;
+  } catch (error) {
+    if (error instanceof RunReportDeliveryBusyError) {
+      throw error;
+    }
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw new RunReportDeliveryBusyError();
+  } finally {
+    removeOwnedPath(projectRoot, claim, current.identity);
+  }
+}
+
+function acquireAcquisitionGuard(options: {
+  readonly projectRoot: string;
+  readonly filePath: string;
+  readonly createdAt: string;
+  readonly pid: number;
+  readonly processAlive: (pid: number) => boolean;
+}): () => void {
+  const guardPath = acquisitionGuardPath(options.filePath);
+  for (let attempt = 1; attempt <= 8; attempt += 1) {
+    const nonce = randomUUID();
+    const ownerPath = guardOwnerPath(guardPath, nonce);
+    let descriptor: number | undefined;
+    let identity: { readonly dev: number; readonly ino: number } | undefined;
+    try {
+      descriptor = openSync(
+        assertNoSymlinkComponents(options.projectRoot, ownerPath),
+        constants.O_CREAT |
+          constants.O_EXCL |
+          constants.O_WRONLY |
+          (constants.O_NOFOLLOW ?? 0),
+        0o600,
+      );
+      const stat = fstatSync(descriptor);
+      identity = { dev: stat.dev, ino: stat.ino };
+      const record: GuardRecord = {
+        pid: options.pid,
+        nonce,
+        createdAt: options.createdAt,
+        dev: stat.dev,
+        ino: stat.ino,
+      };
+      writeFileSync(descriptor, `${JSON.stringify(record)}\n`, "utf8");
+      fsyncSync(descriptor);
+      linkSync(ownerPath, guardPath);
+      let released = false;
+      return () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        removeOwnedPath(options.projectRoot, guardPath, identity!);
+        closeSync(descriptor!);
+        descriptor = undefined;
+        removeOwnedPath(options.projectRoot, ownerPath, identity!);
+      };
+    } catch (error) {
+      if (descriptor !== undefined) {
+        closeSync(descriptor);
+        descriptor = undefined;
+      }
+      if (identity !== undefined) {
+        removeOwnedPath(options.projectRoot, ownerPath, identity);
+      }
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+      const current = readGuard(options.projectRoot, guardPath);
+      if (options.processAlive(current.record.pid)) {
+        throw new RunReportDeliveryBusyError();
+      }
+      if (!recoverGuard(options.projectRoot, guardPath, current)) {
+        continue;
+      }
+    }
+  }
+  throw new RunReportDeliveryBusyError();
+}
+
 function acquireLock(options: {
   readonly projectRoot: string;
   readonly runId: string;
@@ -506,47 +810,65 @@ function acquireLock(options: {
   readonly processAlive: (pid: number) => boolean;
 }): () => void {
   const filePath = lockPath(options.projectRoot, options.runId);
+  const releaseAcquisitionGuard = acquireAcquisitionGuard({
+    projectRoot: options.projectRoot,
+    filePath,
+    createdAt: options.createdAt,
+    pid: options.pid,
+    processAlive: options.processAlive,
+  });
   const record: LockRecord = {
     pid: options.pid,
     nonce: randomUUID(),
     createdAt: options.createdAt,
   };
   let descriptor: number | undefined;
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    try {
-      descriptor = openSync(
-        assertNoSymlinkComponents(options.projectRoot, filePath),
-        constants.O_CREAT |
-          constants.O_EXCL |
-          constants.O_WRONLY |
-          (constants.O_NOFOLLOW ?? 0),
-        0o600,
-      );
-      writeFileSync(descriptor, `${JSON.stringify(record)}\n`, "utf8");
-      fsyncSync(descriptor);
-      break;
-    } catch (error) {
-      if (descriptor !== undefined) {
-        closeSync(descriptor);
-        descriptor = undefined;
-      }
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST" || attempt === 2) {
-        if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+  let identity: { readonly dev: number; readonly ino: number } | undefined;
+  try {
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        descriptor = openSync(
+          assertNoSymlinkComponents(options.projectRoot, filePath),
+          constants.O_CREAT |
+            constants.O_EXCL |
+            constants.O_WRONLY |
+            (constants.O_NOFOLLOW ?? 0),
+          0o600,
+        );
+        const stat = fstatSync(descriptor);
+        identity = { dev: stat.dev, ino: stat.ino };
+        writeFileSync(descriptor, `${JSON.stringify(record)}\n`, "utf8");
+        fsyncSync(descriptor);
+        break;
+      } catch (error) {
+        if (descriptor !== undefined) {
+          closeSync(descriptor);
+          descriptor = undefined;
+        }
+        if (identity !== undefined) {
+          removeOwnedPath(options.projectRoot, filePath, identity);
+          identity = undefined;
+        }
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST" || attempt === 2) {
+          if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+            throw new RunReportDeliveryBusyError();
+          }
+          throw error;
+        }
+        const current = existingLock(options.projectRoot, filePath);
+        if (options.processAlive(current.record.pid)) {
           throw new RunReportDeliveryBusyError();
         }
-        throw error;
+        removeStaleLock(options.projectRoot, filePath, current.identity);
       }
-      const current = existingLock(options.projectRoot, filePath);
-      if (options.processAlive(current.record.pid)) {
-        throw new RunReportDeliveryBusyError();
-      }
-      removeStaleLock(options.projectRoot, filePath, current.identity);
     }
+  } finally {
+    releaseAcquisitionGuard();
   }
   if (descriptor === undefined) {
     throw new RunReportDeliveryBusyError();
   }
-  const identity = fstatSync(descriptor);
+  const acquiredIdentity = identity ?? fstatSync(descriptor);
   let released = false;
   return () => {
     if (released) {
@@ -558,7 +880,11 @@ function acquireLock(options: {
       const current = lstatSync(
         assertNoSymlinkComponents(options.projectRoot, filePath),
       );
-      if (current.isFile() && !current.isSymbolicLink() && sameFile(current, identity)) {
+      if (
+        current.isFile() &&
+        !current.isSymbolicLink() &&
+        sameFile(current, acquiredIdentity)
+      ) {
         unlinkSync(filePath);
       }
     } catch {

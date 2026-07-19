@@ -1,9 +1,16 @@
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  closeSync,
   existsSync,
+  fstatSync,
+  fsyncSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -12,6 +19,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -470,7 +478,11 @@ describe("run report delivery ledger", () => {
       })}\n`,
       { mode: 0o600 },
     );
-    const processAlive = vi.fn(() => false);
+    const processAlive = vi.fn((_pid: number) => false);
+    const guard = join(
+      locks,
+      `report-delivery-${RUN_ID}.lock.acquire`,
+    );
 
     await expect(
       deliverRunReport({
@@ -479,10 +491,145 @@ describe("run report delivery ledger", () => {
         sendText: async () => ({ status: "sent", chunks: 1 }),
         sendImage: async () => ({ status: "sent" }),
         now: () => NOW,
-        isProcessAlive: processAlive,
+        isProcessAlive: (pid) => {
+          const guardStat = statSync(guard);
+          expect(guardStat.isFile()).toBe(true);
+          expect(guardStat.nlink).toBeGreaterThanOrEqual(2);
+          return processAlive(pid);
+        },
       }),
     ).resolves.toMatchObject({ status: "sent" });
     expect(processAlive).toHaveBeenCalledWith(999_999);
+    expect(existsSync(guard)).toBe(false);
+  });
+
+  it("lets at most one stale-lock recoverer acquire and leaves no guard behind", async () => {
+    const root = project();
+    const locks = join(root, ".state", "locks");
+    const lock = join(locks, `report-delivery-${RUN_ID}.lock`);
+    const guard = `${lock}.acquire`;
+    mkdirSync(locks, { recursive: true, mode: 0o700 });
+    writeFileSync(
+      lock,
+      `${JSON.stringify({
+        pid: 999_999,
+        nonce: "22222222-2222-4222-8222-222222222222",
+        createdAt: NOW.toISOString(),
+      })}\n`,
+      { mode: 0o600 },
+    );
+    const sendText = vi.fn(async () => ({ status: "sent" as const, chunks: 1 }));
+    let competing:
+      | Promise<{ readonly kind: "sent" | "busy" }>
+      | undefined;
+    const common = {
+      projectRoot: root,
+      report: report(),
+      sendText,
+      sendImage: vi.fn(async () => ({ status: "sent" as const })),
+      now: () => NOW,
+    };
+
+    const first = deliverRunReport({
+      ...common,
+      pid: 101,
+      isProcessAlive: () => {
+        competing = deliverRunReport({
+          ...common,
+          pid: 202,
+          isProcessAlive: (pid) => pid === 101,
+        }).then(
+          () => ({ kind: "sent" as const }),
+          (error: unknown) => {
+            expect(error).toBeInstanceOf(RunReportDeliveryBusyError);
+            return { kind: "busy" as const };
+          },
+        );
+        return false;
+      },
+    }).then(
+      () => ({ kind: "sent" as const }),
+      (error: unknown) => {
+        expect(error).toBeInstanceOf(RunReportDeliveryBusyError);
+        return { kind: "busy" as const };
+      },
+    );
+
+    expect(competing).toBeDefined();
+    const outcomes = await Promise.all([first, competing!]);
+    expect(outcomes.map(({ kind }) => kind).sort()).toEqual(["busy", "sent"]);
+    expect(sendText).toHaveBeenCalledOnce();
+    expect(existsSync(lock)).toBe(false);
+    expect(existsSync(guard)).toBe(false);
+  });
+
+  it("lets only one crashed-guard recoverer proceed and removes every guard claim", async () => {
+    const root = project();
+    const locks = join(root, ".state", "locks");
+    const lock = join(locks, `report-delivery-${RUN_ID}.lock`);
+    const guard = `${lock}.acquire`;
+    const nonce = "33333333-3333-4333-8333-333333333333";
+    const owner = `${guard}.owner-${nonce}`;
+    mkdirSync(locks, { recursive: true, mode: 0o700 });
+    const ownerDescriptor = openSync(owner, "wx", 0o600);
+    const ownerIdentity = fstatSync(ownerDescriptor);
+    writeFileSync(
+      ownerDescriptor,
+      `${JSON.stringify({
+        pid: 999_999,
+        nonce,
+        createdAt: NOW.toISOString(),
+        dev: ownerIdentity.dev,
+        ino: ownerIdentity.ino,
+      })}\n`,
+    );
+    fsyncSync(ownerDescriptor);
+    closeSync(ownerDescriptor);
+    linkSync(owner, guard);
+
+    const sendText = vi.fn(async () => ({ status: "sent" as const, chunks: 1 }));
+    const common = {
+      projectRoot: root,
+      report: report(),
+      sendText,
+      sendImage: vi.fn(async () => ({ status: "sent" as const })),
+      now: () => NOW,
+    };
+    let competing:
+      | Promise<{ readonly kind: "sent" | "busy" }>
+      | undefined;
+    const first = deliverRunReport({
+      ...common,
+      pid: 101,
+      isProcessAlive: () => {
+        competing = deliverRunReport({
+          ...common,
+          pid: 202,
+          isProcessAlive: () => false,
+        }).then(
+          () => ({ kind: "sent" as const }),
+          (error: unknown) => {
+            expect(error).toBeInstanceOf(RunReportDeliveryBusyError);
+            return { kind: "busy" as const };
+          },
+        );
+        return false;
+      },
+    }).then(
+      () => ({ kind: "sent" as const }),
+      (error: unknown) => {
+        expect(error).toBeInstanceOf(RunReportDeliveryBusyError);
+        return { kind: "busy" as const };
+      },
+    );
+
+    expect(competing).toBeDefined();
+    const outcomes = await Promise.all([first, competing!]);
+    expect(outcomes.map(({ kind }) => kind).sort()).toEqual(["busy", "sent"]);
+    expect(sendText).toHaveBeenCalledOnce();
+    expect(
+      readdirSync(locks).filter((entry) => entry.includes(".acquire")),
+    ).toEqual([]);
   });
 
   it.each(["mode", "malformed", "hash", "symlink"])(
@@ -537,6 +684,35 @@ describe("run report delivery ledger", () => {
       expect(kind === "symlink" ? "symlink" : readFileSync(path, "utf8")).toBe(before);
     },
   );
+
+  it("classifies a FIFO ledger as invalid without blocking", () => {
+    const root = project();
+    const runs = join(root, ".state", "delivery", "runs");
+    mkdirSync(runs, { recursive: true, mode: 0o700 });
+    execFileSync("/usr/bin/mkfifo", [join(runs, `${RUN_ID}.json`)]);
+    const moduleUrl = pathToFileURL(
+      join(process.cwd(), "src", "delivery", "run-report-delivery.ts"),
+    ).href;
+    const child = spawnSync(
+      "/opt/homebrew/opt/node@22/bin/node",
+      [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "-e",
+        `import { runDeliveryDisposition } from ${JSON.stringify(moduleUrl)};\n` +
+          `const result = runDeliveryDisposition(${JSON.stringify({
+            projectRoot: root,
+            report: report(),
+          })});\n` +
+          `process.stdout.write(result);`,
+      ],
+      { encoding: "utf8", timeout: 1_500 },
+    );
+
+    expect(child.status).toBe(0);
+    expect(child.stdout).toBe("indeterminate");
+  });
 
   it("turns a recovered sending claim into indeterminate without replay", async () => {
     const root = project();
