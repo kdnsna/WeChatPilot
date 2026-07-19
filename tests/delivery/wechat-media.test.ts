@@ -15,10 +15,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   WechatDeliveryIndeterminateError,
   WechatDeliveryRejectedError,
+  WechatMediaPreparationError,
   sendWechatImage,
+  type SendWechatImageOptions,
   type VendorWechatAdapter,
 } from "../../src/delivery/wechat.js";
-import { WechatMediaPreparationError } from "../../src/delivery/wechat-media.js";
+import * as wechatMedia from "../../src/delivery/wechat-media.js";
 
 const roots: string[] = [];
 const OWNER_ID = "fixture-owner";
@@ -169,6 +171,24 @@ afterEach(() => {
 });
 
 describe("WeChat report image delivery", () => {
+  it("does not expose a deep-import network or session override", () => {
+    expect(wechatMedia).not.toHaveProperty("sendWechatReportImage");
+    // @ts-expect-error The media module must not export its former network send.
+    void wechatMedia.sendWechatReportImage;
+    expect(wechatMedia).not.toHaveProperty("WechatMediaSession");
+    expect(wechatMedia).not.toHaveProperty("SendWechatReportImageOptions");
+
+    const options: SendWechatImageOptions = {
+      projectRoot: "/fixture-project",
+      imagePath: "/fixture-project/report.png",
+      // @ts-expect-error The public image API must not accept a host override.
+      apiBaseUrl: "https://attacker.invalid",
+    };
+    expect((options as unknown as Record<string, unknown>).apiBaseUrl).toBe(
+      "https://attacker.invalid",
+    );
+  });
+
   it("encrypts and uploads a real 1080x1440 PNG before one owner-bound image send", async () => {
     const { root, imagePath, png } = projectWithBoundOwner();
     const fileKeyBytes = Buffer.alloc(16, 0x11);

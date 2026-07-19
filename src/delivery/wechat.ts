@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import {
-  sendWechatReportImage,
+  prepareWechatImageMedia,
   WechatMediaPreparationError,
 } from "./wechat-media.js";
 import { readProjectText, writeProjectTextAtomic } from "../lib/project-file.js";
@@ -17,7 +17,12 @@ import {
   resolveProjectPath,
 } from "../lib/paths.js";
 
+export { WechatMediaPreparationError } from "./wechat-media.js";
+
 const CHANNEL_VERSION = "1.0.2";
+const WECHAT_API_BASE_URL = "https://ilinkai.weixin.qq.com";
+const WECHAT_CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
+const IMAGE_MEDIA_TYPE = 1;
 const MAX_STATE_BYTES = 64 * 1_024;
 const MAX_UPDATE_BYTES = 1 * 1_024 * 1_024;
 const MAX_SEND_RESPONSE_BYTES = 64 * 1_024;
@@ -53,7 +58,7 @@ function validWechatBaseUrl(value: string): boolean {
       url.hash === "" &&
       (url.pathname === "" || url.pathname === "/") &&
       url.port === "" &&
-      url.hostname === "ilinkai.weixin.qq.com"
+      url.href === `${WECHAT_API_BASE_URL}/`
     );
   } catch {
     return false;
@@ -884,6 +889,215 @@ export async function sendWechatText(
   return await sender(options.text);
 }
 
+function mediaApiHeaders(
+  botToken: string,
+  vendor: VendorWechatAdapter,
+): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    AuthorizationType: "ilink_bot_token",
+    Authorization: `Bearer ${botToken}`,
+    "X-WECHAT-UIN": vendor.generateWechatUin(),
+  };
+}
+
+function responseRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("invalid response");
+  }
+  return value as Record<string, unknown>;
+}
+
+function optionalResponseInteger(
+  record: Record<string, unknown>,
+  key: "ret" | "errcode",
+): number | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new Error("invalid response status");
+  }
+  return value;
+}
+
+function validMediaParameter(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 16_384 &&
+    value.trim() === value &&
+    !/[\r\n]/u.test(value)
+  );
+}
+
+interface SendBoundWechatImageOptions {
+  readonly projectRoot: string;
+  readonly imagePath: string;
+  readonly botToken: string;
+  readonly ownerUserId: string;
+  readonly contextToken: string;
+  readonly vendor: VendorWechatAdapter;
+  readonly signal?: AbortSignal;
+  readonly randomBytes?: (size: number) => Buffer;
+  readonly clientId?: () => string;
+}
+
+async function sendBoundWechatImage(
+  options: SendBoundWechatImageOptions,
+): Promise<{ readonly status: "sent" }> {
+  let media: ReturnType<typeof prepareWechatImageMedia>;
+  let downloadParameter: string;
+  try {
+    media = prepareWechatImageMedia({
+      projectRoot: options.projectRoot,
+      imagePath: options.imagePath,
+      ...(options.randomBytes === undefined
+        ? {}
+        : { randomBytes: options.randomBytes }),
+    });
+    const uploadResponse = await options.vendor.fetchWithRetry(
+      `${WECHAT_API_BASE_URL}/ilink/bot/getuploadurl`,
+      {
+        method: "POST",
+        headers: mediaApiHeaders(options.botToken, options.vendor),
+        body: JSON.stringify({
+          filekey: media.fileKey,
+          media_type: IMAGE_MEDIA_TYPE,
+          to_user_id: options.ownerUserId,
+          rawsize: media.rawSize,
+          rawfilemd5: media.rawMd5,
+          filesize: media.encryptedSize,
+          aeskey: media.aesKey.toString("hex"),
+          no_need_thumb: true,
+          base_info: { channel_version: CHANNEL_VERSION },
+        }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        label: "report-image-upload-url",
+        retries: 0,
+        timeoutMs: 30_000,
+      },
+    );
+    if (!uploadResponse.ok) {
+      await uploadResponse.body?.cancel();
+      throw new Error("upload authorization failed");
+    }
+    const uploadValue = responseRecord(
+      await boundedJson(uploadResponse, MAX_SEND_RESPONSE_BYTES),
+    );
+    const uploadRet = optionalResponseInteger(uploadValue, "ret");
+    const uploadErrcode = optionalResponseInteger(uploadValue, "errcode");
+    if (
+      (uploadRet !== undefined && uploadRet !== 0) ||
+      (uploadErrcode !== undefined && uploadErrcode !== 0)
+    ) {
+      throw new Error("upload authorization rejected");
+    }
+    const uploadParameter = uploadValue.upload_param;
+    if (!validMediaParameter(uploadParameter)) {
+      throw new Error("missing upload parameter");
+    }
+
+    const cdnUrl = new URL(`${WECHAT_CDN_BASE_URL}/upload`);
+    cdnUrl.searchParams.set("encrypted_query_param", uploadParameter);
+    cdnUrl.searchParams.set("filekey", media.fileKey);
+    const cdnResponse = await options.vendor.fetchWithRetry(cdnUrl.href, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: media.encrypted,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      label: "report-image-cdn-upload",
+      retries: 0,
+      timeoutMs: 60_000,
+    });
+    if (!cdnResponse.ok) {
+      await cdnResponse.body?.cancel();
+      throw new Error("cdn upload failed");
+    }
+    downloadParameter = cdnResponse.headers.get("x-encrypted-param") ?? "";
+    await cdnResponse.body?.cancel();
+    if (!validMediaParameter(downloadParameter)) {
+      throw new Error("missing download parameter");
+    }
+  } catch {
+    throw new WechatMediaPreparationError();
+  }
+
+  let response: Response;
+  try {
+    response = await options.vendor.fetchWithRetry(
+      `${WECHAT_API_BASE_URL}/ilink/bot/sendmessage`,
+      {
+        method: "POST",
+        headers: mediaApiHeaders(options.botToken, options.vendor),
+        body: JSON.stringify({
+          msg: {
+            from_user_id: "",
+            to_user_id: options.ownerUserId,
+            client_id: (options.clientId ?? randomUUID)(),
+            message_type: 2,
+            message_state: 2,
+            context_token: options.contextToken,
+            item_list: [
+              {
+                type: 2,
+                image_item: {
+                  media: {
+                    encrypt_query_param: downloadParameter,
+                    aes_key: Buffer.from(
+                      media.aesKey.toString("hex"),
+                      "ascii",
+                    ).toString("base64"),
+                    encrypt_type: 1,
+                  },
+                  mid_size: media.encryptedSize,
+                },
+              },
+            ],
+          },
+          base_info: { channel_version: CHANNEL_VERSION },
+        }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        label: "report-image-send",
+        retries: 0,
+        timeoutMs: 30_000,
+      },
+    );
+  } catch {
+    throw new WechatDeliveryIndeterminateError();
+  }
+  if (response.status === 401 || response.status === 403) {
+    await response.body?.cancel();
+    throw new WechatLoginExpiredError();
+  }
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new WechatDeliveryIndeterminateError();
+  }
+  let ret: number | undefined;
+  let errcode: number | undefined;
+  try {
+    const value = responseRecord(
+      await boundedJson(response, MAX_SEND_RESPONSE_BYTES),
+    );
+    ret = optionalResponseInteger(value, "ret");
+    errcode = optionalResponseInteger(value, "errcode");
+  } catch {
+    throw new WechatDeliveryIndeterminateError();
+  }
+  if (errcode === -14 || errcode === -13) {
+    throw new WechatLoginExpiredError();
+  }
+  if (
+    (ret !== undefined && ret !== 0) ||
+    (errcode !== undefined && errcode !== 0)
+  ) {
+    throw new WechatDeliveryRejectedError();
+  }
+  return { status: "sent" };
+}
+
 export interface PrepareWechatImageSenderOptions {
   readonly projectRoot: string;
   readonly vendor?: VendorWechatAdapter;
@@ -908,21 +1122,13 @@ export async function prepareWechatImageSender(
   const vendor =
     options.vendor ?? (await loadVendorWechatAdapter(options.projectRoot));
   return async (imagePath: string) =>
-    await sendWechatReportImage({
+    await sendBoundWechatImage({
       projectRoot: options.projectRoot,
       imagePath,
-      session: {
-        apiBaseUrl: state.credentials.baseUrl.replace(/\/$/u, ""),
-        botToken: state.credentials.botToken,
-        ownerUserId: state.credentials.ilinkUserId,
-        contextToken: state.context.contextToken,
-      },
-      adapter: vendor,
-      errors: {
-        indeterminate: () => new WechatDeliveryIndeterminateError(),
-        rejected: () => new WechatDeliveryRejectedError(),
-        loginExpired: () => new WechatLoginExpiredError(),
-      },
+      botToken: state.credentials.botToken,
+      ownerUserId: state.credentials.ilinkUserId,
+      contextToken: state.context.contextToken,
+      vendor,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.randomBytes === undefined
         ? {}

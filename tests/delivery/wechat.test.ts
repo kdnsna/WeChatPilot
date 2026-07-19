@@ -17,6 +17,7 @@ import {
   WechatLoginExpiredError,
   WechatDeliveryIndeterminateError,
   WechatDeliveryRejectedError,
+  WechatMediaPreparationError,
   WechatPartialDeliveryError,
   initializeWechat,
   prepareWechatImageSender,
@@ -27,7 +28,6 @@ import {
   type VendorWechatAdapter,
   type WechatCredentials,
 } from "../../src/delivery/wechat.js";
-import { WechatMediaPreparationError } from "../../src/delivery/wechat-media.js";
 
 const roots: string[] = [];
 const credentials: WechatCredentials = {
