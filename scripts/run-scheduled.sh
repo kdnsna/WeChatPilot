@@ -1,8 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && /bin/pwd -P)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && /bin/pwd -P)"
+PROJECT_ROOT="/Users/kdnsna/Documents/微信 chat"
 NODE22="/opt/homebrew/opt/node@22/bin/node"
 
 cd "${PROJECT_ROOT}"

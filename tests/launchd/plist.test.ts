@@ -46,7 +46,7 @@ describe("LaunchAgent template", () => {
     );
     expect(plist).not.toContain("<key>KeepAlive</key>");
     expect(plist).not.toMatch(
-      /bridge|router|approve|deny|\bshell\b|--command|--recipient|--cwd|--yolo|danger-full-access|dangerously-bypass/iu,
+      /bridge|router|approve|deny|\bshell\b|--command|--recipient|--cwd|--yolo|--add-dir|danger-full-access|dangerously-bypass/iu,
     );
     expect(plist).not.toContain("${");
     expect(plist).not.toContain("~/");

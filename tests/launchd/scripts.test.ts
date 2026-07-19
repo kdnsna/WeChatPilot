@@ -10,14 +10,16 @@ describe("LaunchAgent lifecycle scripts", () => {
   it("routes the scheduled script through the fixed observer job without remote control", () => {
     const path = resolve(projectRoot, "scripts", "run-scheduled.sh");
     const script = readFileSync(path, "utf8");
-    expect(script).toContain('SCRIPT_DIR="$(cd "$(/usr/bin/dirname');
-    expect(script).toContain('PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.."');
+    expect(script).toContain(
+      'PROJECT_ROOT="/Users/kdnsna/Documents/微信 chat"',
+    );
+    expect(script).not.toContain("SCRIPT_DIR=");
     expect(script).toContain('NODE22="/opt/homebrew/opt/node@22/bin/node"');
     expect(script).toContain('"${PROJECT_ROOT}/dist/src/cli/observer.js"');
     expect(script).toContain('--job "daily-tech-digest"');
     expect(script).not.toContain("scheduled.js");
     expect(script).not.toMatch(
-      /bridge|router|approve|deny|\bshell\b|--command|--recipient|--cwd|--yolo|danger-full-access|dangerously-bypass/iu,
+      /bridge|router|approve|deny|\bshell\b|--command|--recipient|--cwd|--yolo|--add-dir|danger-full-access|dangerously-bypass/iu,
     );
   });
 
@@ -35,7 +37,7 @@ describe("LaunchAgent lifecycle scripts", () => {
     expect(script).toContain("--import tsx");
     expect(script).toContain("src/cli/send-run-report-test.ts");
     expect(script).not.toMatch(
-      /--user|--recipient|--command|--attachment|--status|--message|--path/iu,
+      /--user|--recipient|--command|--attachment|--status|--message|--path|--add-dir|--yolo|danger-full-access|dangerously-bypass/iu,
     );
   });
 

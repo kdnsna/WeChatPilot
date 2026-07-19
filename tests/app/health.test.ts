@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   EXPECTED_VENDOR_HEAD,
@@ -80,6 +80,7 @@ function healthyProbes(
       indeterminate: 0,
       invalid: 0,
     }),
+    runDeliveryDisposition: () => "sent",
     ...overrides,
   };
 }
@@ -320,8 +321,8 @@ describe("project health", () => {
             runId: secretRunId,
           } as never,
         ],
-        inspectRunDeliveryState: ({ reports }) => {
-          expect(reports).toHaveLength(1);
+        inspectRunDeliveryState: (options) => {
+          expect(options).not.toHaveProperty("reports");
           return { pending: 3, indeterminate: 4, invalid: 0 };
         },
       }),
@@ -347,6 +348,54 @@ describe("project health", () => {
     expect(serialized).not.toContain(secretRunId);
     expect(serialized).not.toContain(root);
     expect(healthExitCode(report)).toBe(0);
+  });
+
+  it("scans orphan ledgers and adds only missing final-report deliveries", () => {
+    const root = project();
+    const missingRunId = "018f514c-1a2b-7abc-8def-1234567890ac";
+    const retryableRunId = "018f514c-1a2b-7abc-8def-1234567890ad";
+    const indeterminateRunId = "018f514c-1a2b-7abc-8def-1234567890ae";
+    const reports = [missingRunId, retryableRunId, indeterminateRunId].map(
+      (runId) => ({ runId }) as never,
+    );
+    const inspectRunDeliveryState = vi.fn((options: { reports?: unknown }) => {
+      expect(options).not.toHaveProperty("reports");
+      // All ledgers: one orphan and one final retryable, one orphan and one
+      // final indeterminate, plus one orphan invalid ledger.
+      return { pending: 2, indeterminate: 2, invalid: 1 };
+    });
+    const runDeliveryDisposition = vi.fn(({ report }: { report: { runId: string } }) =>
+      report.runId === missingRunId
+        ? "missing" as const
+        : report.runId === retryableRunId
+          ? "retryable" as const
+          : "indeterminate" as const,
+    );
+
+    const report = inspectProjectHealth({
+      projectRoot: root,
+      probes: healthyProbes({
+        wechatHealth: () => ({
+          credentialsReady: true,
+          ownerBound: true,
+          contextReady: true,
+        }),
+        listFinalRunReports: () => reports,
+        inspectRunDeliveryState,
+        runDeliveryDisposition,
+      }),
+    });
+
+    expect(inspectRunDeliveryState).toHaveBeenCalledOnce();
+    expect(runDeliveryDisposition).toHaveBeenCalledTimes(3);
+    expect(report.observer).toMatchObject({
+      pendingDeliveries: 3,
+      indeterminateDeliveries: 2,
+      invalidStateRecords: 1,
+    });
+    expect(JSON.stringify(report)).not.toContain(missingRunId);
+    expect(JSON.stringify(report)).not.toContain(retryableRunId);
+    expect(JSON.stringify(report)).not.toContain(indeterminateRunId);
   });
 
   it.each([
