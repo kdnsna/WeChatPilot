@@ -195,6 +195,44 @@ describe("observer task lock", () => {
     expect(readdirSync(directory)).toEqual([]);
   });
 
+  it("hardens fresh lock directories under a restrictive process umask", async () => {
+    const root = project();
+    let lock: Awaited<ReturnType<typeof acquireObserverTaskLock>> | undefined;
+    let failure: unknown;
+    const previousUmask = process.umask(0o777);
+    try {
+      lock = await acquireObserverTaskLock({
+        projectRoot: root,
+        taskId: "daily-tech-digest",
+      });
+    } catch (error) {
+      failure = error;
+    } finally {
+      process.umask(previousUmask);
+    }
+
+    const stateDirectory = join(root, ".state");
+    const locksDirectory = join(stateDirectory, "locks");
+    if (failure !== undefined) {
+      try {
+        chmodSync(stateDirectory, 0o700);
+        chmodSync(locksDirectory, 0o700);
+      } catch {
+        // Preserve the acquisition failure assertion while allowing temp cleanup.
+      }
+    }
+    expect(failure).toBeUndefined();
+    expect(lock).toBeDefined();
+    expect(statSync(stateDirectory).mode & 0o777).toBe(0o700);
+    expect(statSync(locksDirectory).mode & 0o777).toBe(0o700);
+    expect(statSync(lockPath(root)).mode & 0o777).toBe(0o600);
+    expect(readdirSync(locksDirectory)).toEqual([
+      "observer-daily-tech-digest.lock",
+    ]);
+    await lock?.release();
+    expect(readdirSync(locksDirectory)).toEqual([]);
+  });
+
   it("never removes a replacement lock during release", async () => {
     const root = project();
     const lock = await acquireObserverTaskLock({

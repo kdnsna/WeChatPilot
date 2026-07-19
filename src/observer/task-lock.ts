@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  chmodSync,
   closeSync,
   constants,
   fchmodSync,
@@ -10,6 +11,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  rmdirSync,
   unlinkSync,
   writeFileSync,
   type Stats,
@@ -94,28 +96,79 @@ function lockFilePath(projectRoot: string, taskId: string): string {
   );
 }
 
-function ensurePrivateLockDirectory(projectRoot: string): string {
-  const stateDirectory = resolveProjectPath(projectRoot, ".state");
-  const lockDirectory = resolveProjectPath(projectRoot, ".state", "locks");
-  for (const directory of [stateDirectory, lockDirectory]) {
-    assertNoSymlinkComponents(projectRoot, directory);
-    try {
-      mkdirSync(directory, { mode: PRIVATE_DIRECTORY_MODE });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-        throw new ObserverTaskBusyError();
-      }
-    }
+function removeCreatedEmptyDirectory(
+  directory: string,
+  identity: LockIdentity,
+): void {
+  try {
     const metadata = lstatSync(directory);
     if (
       metadata.isSymbolicLink() ||
       !metadata.isDirectory() ||
-      (metadata.mode & 0o777) !== PRIVATE_DIRECTORY_MODE
+      !sameIdentity(metadata, identity)
     ) {
-      throw new ObserverTaskBusyError();
+      return;
     }
+    rmdirSync(directory);
+  } catch {
+    // Never remove a replacement or a non-empty/pre-existing directory.
   }
-  return lockDirectory;
+}
+
+function createPrivateLocksDirectory(projectRoot: string): string {
+  const created: Array<{
+    readonly directory: string;
+    readonly identity: LockIdentity;
+  }> = [];
+  let lockDirectory = "";
+  try {
+    for (const segments of [[".state"], [".state", "locks"]] as const) {
+      const directory = resolveProjectPath(projectRoot, ...segments);
+      assertNoSymlinkComponents(projectRoot, directory);
+      let createdNow = false;
+      try {
+        mkdirSync(directory, { mode: PRIVATE_DIRECTORY_MODE });
+        createdNow = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+          throw new ObserverTaskBusyError();
+        }
+      }
+
+      const initialMetadata = lstatSync(directory);
+      if (initialMetadata.isSymbolicLink() || !initialMetadata.isDirectory()) {
+        throw new ObserverTaskBusyError();
+      }
+      const identity = {
+        dev: initialMetadata.dev,
+        ino: initialMetadata.ino,
+      };
+      if (createdNow) {
+        created.push({ directory, identity });
+        chmodSync(directory, PRIVATE_DIRECTORY_MODE);
+      }
+
+      const hardenedMetadata = lstatSync(directory);
+      if (
+        hardenedMetadata.isSymbolicLink() ||
+        !hardenedMetadata.isDirectory() ||
+        (hardenedMetadata.mode & 0o777) !== PRIVATE_DIRECTORY_MODE ||
+        !sameIdentity(hardenedMetadata, identity)
+      ) {
+        throw new ObserverTaskBusyError();
+      }
+      lockDirectory = directory;
+    }
+    return lockDirectory;
+  } catch (error) {
+    for (const entry of created.reverse()) {
+      removeCreatedEmptyDirectory(entry.directory, entry.identity);
+    }
+    if (error instanceof ObserverTaskBusyError) {
+      throw error;
+    }
+    throw new ObserverTaskBusyError();
+  }
 }
 
 function readExistingLock(
@@ -225,7 +278,7 @@ export async function acquireObserverTaskLock(
     throw safeError();
   }
 
-  ensurePrivateLockDirectory(options.projectRoot);
+  createPrivateLocksDirectory(options.projectRoot);
   const path = lockFilePath(options.projectRoot, taskId);
   const processAlive = options.isProcessAlive ?? processIsAlive;
   const writeOwner =
