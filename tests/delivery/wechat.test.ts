@@ -51,6 +51,42 @@ function jsonResponse(value: unknown, status = 200): Response {
   });
 }
 
+function reportPng(): Buffer {
+  const crc32 = (bytes: Uint8Array): number => {
+    let crc = 0xffff_ffff;
+    for (const byte of bytes) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit += 1) {
+        crc = (crc >>> 1) ^ (crc & 1 ? 0xedb8_8320 : 0);
+      }
+    }
+    return (crc ^ 0xffff_ffff) >>> 0;
+  };
+  const chunk = (type: string, data = Buffer.alloc(0)): Buffer => {
+    const typeBytes = Buffer.from(type, "ascii");
+    const value = Buffer.alloc(12 + data.length);
+    value.writeUInt32BE(data.length, 0);
+    typeBytes.copy(value, 4);
+    data.copy(value, 8);
+    value.writeUInt32BE(
+      crc32(Buffer.concat([typeBytes, data])),
+      8 + data.length,
+    );
+    return value;
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1_080, 0);
+  ihdr.writeUInt32BE(1_440, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  return Buffer.concat([
+    Buffer.from("89504e470d0a1a0a", "hex"),
+    chunk("IHDR", ihdr),
+    chunk("IDAT"),
+    chunk("IEND"),
+  ]);
+}
+
 function adapter(
   responses: readonly Response[],
   login = async () => credentials,
@@ -585,14 +621,18 @@ describe("WeChat proactive send", () => {
         seenInitializationMessageIds: [31],
       })}\n`,
     );
-    const imagePath = join(root, "report.png");
-    const pngHeader = Buffer.alloc(33);
-    Buffer.from("89504e470d0a1a0a", "hex").copy(pngHeader);
-    pngHeader.writeUInt32BE(13, 8);
-    pngHeader.write("IHDR", 12, "ascii");
-    pngHeader.writeUInt32BE(1_080, 16);
-    pngHeader.writeUInt32BE(1_440, 20);
-    writeFileSync(imagePath, pngHeader);
+    const reportDirectory = join(
+      root,
+      "output",
+      "run-reports",
+      "2026-07-20",
+    );
+    mkdirSync(reportDirectory, { recursive: true });
+    const imagePath = join(
+      reportDirectory,
+      "018f47a8-72df-7d5e-8c1f-96eacc20f2c3.png",
+    );
+    writeFileSync(imagePath, reportPng());
 
     await expect(prepared(imagePath)).resolves.toEqual({ status: "sent" });
 

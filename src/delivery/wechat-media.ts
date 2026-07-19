@@ -9,15 +9,19 @@ import {
   fstatSync,
   lstatSync,
   openSync,
-  readFileSync,
+  readSync,
   realpathSync,
+  type Stats,
 } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
+import { isValidPng } from "../lib/png.js";
+
 const MAX_IMAGE_BYTES = 5 * 1_024 * 1_024;
-const PNG_SIGNATURE = Buffer.from("89504e470d0a1a0a", "hex");
 const PREPARATION_ERROR_MESSAGE =
   "微信报告图片准备失败，未尝试发送图片消息";
+const REPORT_FILE_NAME =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.png$/u;
 
 export interface PrepareWechatImageMediaOptions {
   readonly projectRoot: string;
@@ -42,22 +46,80 @@ export class WechatMediaPreparationError extends Error {
   }
 }
 
-function containedPath(projectRoot: string, imagePath: string): string {
+interface FileSnapshot {
+  readonly device: number;
+  readonly inode: number;
+  readonly size: number;
+  readonly modifiedMs: number;
+  readonly changedMs: number;
+}
+
+function validDateDirectory(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+  if (match === null) {
+    return false;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function fileSnapshot(metadata: Stats): FileSnapshot {
+  return {
+    device: metadata.dev,
+    inode: metadata.ino,
+    size: metadata.size,
+    modifiedMs: metadata.mtimeMs,
+    changedMs: metadata.ctimeMs,
+  };
+}
+
+function sameSnapshot(
+  metadata: Stats,
+  snapshot: FileSnapshot,
+): boolean {
+  return (
+    metadata.dev === snapshot.device &&
+    metadata.ino === snapshot.inode &&
+    metadata.size === snapshot.size &&
+    metadata.mtimeMs === snapshot.modifiedMs &&
+    metadata.ctimeMs === snapshot.changedMs
+  );
+}
+
+function containedReportPath(projectRoot: string, imagePath: string): {
+  readonly path: string;
+  readonly snapshot: FileSnapshot;
+} {
   const root = realpathSync(projectRoot);
+  if (!isAbsolute(imagePath) || resolve(imagePath) !== imagePath) {
+    throw new Error("invalid report image path");
+  }
   const candidate = resolve(projectRoot, imagePath);
   const lexicalRelative = relative(resolve(projectRoot), candidate);
+  const segments = lexicalRelative.split(sep);
   if (
-    lexicalRelative === ".." ||
-    lexicalRelative.startsWith(`..${sep}`) ||
-    isAbsolute(lexicalRelative)
+    segments.length !== 4 ||
+    segments[0] !== "output" ||
+    segments[1] !== "run-reports" ||
+    segments[2] === undefined ||
+    !validDateDirectory(segments[2]) ||
+    segments[3] === undefined ||
+    !REPORT_FILE_NAME.test(segments[3])
   ) {
-    throw new Error("outside project");
+    throw new Error("invalid report image path");
   }
-  const stat = lstatSync(candidate);
-  if (stat.isSymbolicLink() || !stat.isFile()) {
+  const metadata = lstatSync(candidate);
+  if (metadata.isSymbolicLink() || !metadata.isFile()) {
     throw new Error("unsafe image file");
   }
-  if (stat.size > MAX_IMAGE_BYTES) {
+  if (metadata.size > MAX_IMAGE_BYTES) {
     throw new Error("image too large");
   }
   const actual = realpathSync(candidate);
@@ -66,47 +128,63 @@ function containedPath(projectRoot: string, imagePath: string): string {
     actualRelative === ".." ||
     actualRelative.startsWith(`..${sep}`) ||
     isAbsolute(actualRelative) ||
-    actual !== resolve(root, lexicalRelative)
+    actual !== resolve(root, ...segments)
   ) {
     throw new Error("unsafe image path");
   }
-  return candidate;
+  return { path: candidate, snapshot: fileSnapshot(metadata) };
 }
 
 function readReportPng(projectRoot: string, imagePath: string): Buffer {
-  const safePath = containedPath(projectRoot, imagePath);
-  const before = lstatSync(safePath);
+  const report = containedReportPath(projectRoot, imagePath);
   let descriptor: number | undefined;
   try {
     descriptor = openSync(
-      safePath,
+      report.path,
       constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
     );
     const opened = fstatSync(descriptor);
     if (
       !opened.isFile() ||
-      opened.size > MAX_IMAGE_BYTES ||
-      opened.dev !== before.dev ||
-      opened.ino !== before.ino
+      opened.dev !== report.snapshot.device ||
+      opened.ino !== report.snapshot.inode
     ) {
       throw new Error("unsafe image file");
     }
-    const image = readFileSync(descriptor);
+    const buffer = Buffer.alloc(MAX_IMAGE_BYTES + 1);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const count = readSync(
+        descriptor,
+        buffer,
+        bytesRead,
+        buffer.length - bytesRead,
+        null,
+      );
+      if (count === 0) {
+        break;
+      }
+      bytesRead += count;
+    }
     const after = fstatSync(descriptor);
-    if (after.size !== image.length || after.size !== opened.size) {
-      throw new Error("image changed while reading");
+    if (bytesRead > MAX_IMAGE_BYTES) {
+      throw new Error("image too large");
     }
     if (
-      image.length < 33 ||
-      !image.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE) ||
-      image.readUInt32BE(8) !== 13 ||
-      image.toString("ascii", 12, 16) !== "IHDR" ||
-      image.readUInt32BE(16) !== 1_080 ||
-      image.readUInt32BE(20) !== 1_440
+      bytesRead !== report.snapshot.size ||
+      !sameSnapshot(after, report.snapshot)
     ) {
+      throw new Error("image changed while reading");
+    }
+    const image = buffer.subarray(0, bytesRead);
+    if (!isValidPng(image, {
+      width: 1_080,
+      height: 1_440,
+      maximumBytes: MAX_IMAGE_BYTES,
+    })) {
       throw new Error("invalid report png");
     }
-    return image;
+    return Buffer.from(image);
   } finally {
     if (descriptor !== undefined) {
       closeSync(descriptor);

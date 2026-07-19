@@ -1,5 +1,7 @@
 import { createDecipheriv, createHash } from "node:crypto";
+import fs from "node:fs";
 import {
+  appendFileSync,
   chmodSync,
   mkdirSync,
   mkdtempSync,
@@ -7,10 +9,11 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   WechatDeliveryIndeterminateError,
@@ -26,6 +29,7 @@ const roots: string[] = [];
 const OWNER_ID = "fixture-owner";
 const CONTEXT_TOKEN = "fixture-context-not-secret";
 const BOT_TOKEN = "fixture-bot-token-not-secret";
+const REPORT_ID = "018f47a8-72df-7d5e-8c1f-96eacc20f2c3";
 
 function crc32(data: Buffer): number {
   let crc = 0xffff_ffff;
@@ -95,8 +99,16 @@ function projectWithBoundOwner(): { root: string; imagePath: string; png: Buffer
     seenInitializationMessageIds: [1],
   });
   const png = realReportPng();
-  const imagePath = join(root, "output", "report.png");
-  mkdirSync(join(root, "output"), { recursive: true });
+  const imagePath = join(
+    root,
+    "output",
+    "run-reports",
+    "2026-07-20",
+    `${REPORT_ID}.png`,
+  );
+  mkdirSync(join(root, "output", "run-reports", "2026-07-20"), {
+    recursive: true,
+  });
   writeFileSync(imagePath, png);
   return { root, imagePath, png };
 }
@@ -165,6 +177,8 @@ async function preparationFailure(
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  syncBuiltinESMExports();
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
@@ -312,9 +326,26 @@ describe("WeChat report image delivery", () => {
     expect(vendor.requests).toHaveLength(0);
   });
 
+  it("rejects a forged root-level text path even when its bytes are valid PNG", async () => {
+    const { root, png } = projectWithBoundOwner();
+    const forgedPath = join(root, "forged-report.txt");
+    writeFileSync(forgedPath, png);
+    const vendor = adapter([]);
+
+    await preparationFailure(root, forgedPath, vendor);
+
+    expect(vendor.requests).toHaveLength(0);
+  });
+
   it("rejects a symlink before any request", async () => {
     const { root, imagePath } = projectWithBoundOwner();
-    const linkPath = join(root, "output", "linked-report.png");
+    const linkPath = join(
+      root,
+      "output",
+      "run-reports",
+      "2026-07-20",
+      "11111111-1111-4111-8111-111111111111.png",
+    );
     symlinkSync(imagePath, linkPath);
     const vendor = adapter([]);
 
@@ -343,6 +374,43 @@ describe("WeChat report image delivery", () => {
     expect(vendor.requests).toHaveLength(0);
   });
 
+  it.each([
+    [
+      "invalid chunk CRC",
+      (png: Buffer) => {
+        const corrupted = Buffer.from(png);
+        corrupted[29] = (corrupted[29] ?? 0) ^ 0xff;
+        return corrupted;
+      },
+    ],
+    [
+      "trailing bytes after IEND",
+      (png: Buffer) => Buffer.concat([png, Buffer.from([0])]),
+    ],
+    [
+      "missing IDAT",
+      () => {
+        const ihdr = Buffer.alloc(13);
+        ihdr.writeUInt32BE(1_080, 0);
+        ihdr.writeUInt32BE(1_440, 4);
+        ihdr[8] = 8;
+        return Buffer.concat([
+          Buffer.from("89504e470d0a1a0a", "hex"),
+          pngChunk("IHDR", ihdr),
+          pngChunk("IEND", Buffer.alloc(0)),
+        ]);
+      },
+    ],
+  ])("rejects a structurally invalid PNG: %s", async (_case, corrupt) => {
+    const { root, imagePath, png } = projectWithBoundOwner();
+    writeFileSync(imagePath, corrupt(png));
+    const vendor = adapter([]);
+
+    await preparationFailure(root, imagePath, vendor);
+
+    expect(vendor.requests).toHaveLength(0);
+  });
+
   it("rejects a file over 5 MiB using metadata before reading or requesting", async () => {
     const { root, imagePath, png } = projectWithBoundOwner();
     const oversized = Buffer.alloc(5 * 1_024 * 1_024 + 1);
@@ -352,6 +420,75 @@ describe("WeChat report image delivery", () => {
 
     await preparationFailure(root, imagePath, vendor);
 
+    expect(vendor.requests).toHaveLength(0);
+  });
+
+  it("rejects a file that grows between its snapshot and bounded read", async () => {
+    const { root, imagePath } = projectWithBoundOwner();
+    const originalReadSync = fs.readSync.bind(fs);
+    let changed = false;
+    vi.spyOn(fs, "readSync").mockImplementation(
+      ((...args: Parameters<typeof fs.readSync>) => {
+        if (!changed) {
+          changed = true;
+          appendFileSync(imagePath, Buffer.from([0]));
+        }
+        return originalReadSync(...args);
+      }) as typeof fs.readSync,
+    );
+    syncBuiltinESMExports();
+    const vendor = adapter([]);
+
+    await preparationFailure(root, imagePath, vendor);
+
+    expect(changed).toBe(true);
+    expect(vendor.requests).toHaveLength(0);
+  });
+
+  it("rejects an inode swap between lstat and O_NOFOLLOW open", async () => {
+    const { root, imagePath, png } = projectWithBoundOwner();
+    const originalOpenSync = fs.openSync.bind(fs);
+    let changed = false;
+    vi.spyOn(fs, "openSync").mockImplementation(
+      ((...args: Parameters<typeof fs.openSync>) => {
+        if (!changed && args[0] === imagePath) {
+          changed = true;
+          fs.renameSync(imagePath, `${imagePath}.original`);
+          writeFileSync(imagePath, png);
+        }
+        return originalOpenSync(...args);
+      }) as typeof fs.openSync,
+    );
+    syncBuiltinESMExports();
+    const vendor = adapter([]);
+
+    await preparationFailure(root, imagePath, vendor);
+
+    expect(changed).toBe(true);
+    expect(vendor.requests).toHaveLength(0);
+  });
+
+  it("rejects same-size metadata changes during the file read", async () => {
+    const { root, imagePath } = projectWithBoundOwner();
+    const originalReadSync = fs.readSync.bind(fs);
+    let changed = false;
+    vi.spyOn(fs, "readSync").mockImplementation(
+      ((...args: Parameters<typeof fs.readSync>) => {
+        const bytesRead = originalReadSync(...args);
+        if (!changed) {
+          changed = true;
+          const changedTime = new Date("2030-01-01T00:00:00.000Z");
+          fs.utimesSync(imagePath, changedTime, changedTime);
+        }
+        return bytesRead;
+      }) as typeof fs.readSync,
+    );
+    syncBuiltinESMExports();
+    const vendor = adapter([]);
+
+    await preparationFailure(root, imagePath, vendor);
+
+    expect(changed).toBe(true);
     expect(vendor.requests).toHaveLength(0);
   });
 
@@ -378,6 +515,52 @@ describe("WeChat report image delivery", () => {
     await preparationFailure(root, imagePath, vendor);
 
     expect(vendor.requests).toHaveLength(1);
+  });
+
+  it("fast-rejects an oversized Content-Length and cancels the response", async () => {
+    const { root, imagePath } = projectWithBoundOwner();
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Buffer.from("{}"));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const vendor = adapter([
+      new Response(body, {
+        status: 200,
+        headers: { "content-length": String(64 * 1_024 + 1) },
+      }),
+    ]);
+
+    await preparationFailure(root, imagePath, vendor);
+
+    expect(vendor.requests).toHaveLength(1);
+    expect(cancelled).toBe(true);
+  });
+
+  it("stops and cancels a chunked JSON response at the byte limit", async () => {
+    const { root, imagePath } = projectWithBoundOwner();
+    let cancelled = false;
+    let chunks = 0;
+    const chunk = Buffer.alloc(32 * 1_024, 0x20);
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(chunk);
+        chunks += 1;
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const vendor = adapter([new Response(body, { status: 200 })]);
+
+    await preparationFailure(root, imagePath, vendor);
+
+    expect(vendor.requests).toHaveLength(1);
+    expect(cancelled).toBe(true);
   });
 
   it("rejects a missing x-encrypted-param without attempting final send", async () => {

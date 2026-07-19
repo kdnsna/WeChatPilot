@@ -364,8 +364,70 @@ function combineSignal(
 }
 
 async function boundedJson(response: Response, maximumBytes: number): Promise<unknown> {
-  const raw = await response.text();
-  if (Buffer.byteLength(raw, "utf8") > maximumBytes) {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    const parsedLength = /^\d+$/u.test(contentLength)
+      ? Number(contentLength)
+      : Number.NaN;
+    if (!Number.isSafeInteger(parsedLength) || parsedLength > maximumBytes) {
+      try {
+        await response.body?.cancel();
+      } catch {
+        // The fixed public error below deliberately hides body/stream details.
+      }
+      throw new Error("微信接口响应超过安全大小限制");
+    }
+  }
+  const reader = response.body?.getReader();
+  if (reader === undefined) {
+    throw new Error("微信接口返回了无效响应");
+  }
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  let completed = false;
+  let cancelled = false;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        completed = true;
+        break;
+      }
+      totalBytes += chunk.value.byteLength;
+      if (totalBytes > maximumBytes) {
+        try {
+          await reader.cancel();
+          cancelled = true;
+        } catch {
+          // The fixed public error below deliberately hides body/stream details.
+        }
+        throw new Error("微信接口响应超过安全大小限制");
+      }
+      chunks.push(chunk.value);
+    }
+  } catch (error) {
+    if (!completed && !cancelled) {
+      try {
+        await reader.cancel();
+      } catch {
+        // Preserve the original bounded-read error.
+      }
+    }
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = Buffer.concat(
+    chunks.map((chunk) => Buffer.from(chunk)),
+    totalBytes,
+  );
+  let raw: string;
+  try {
+    raw = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error("微信接口返回了无效响应");
+  }
+  if (bytes.length > maximumBytes) {
     throw new Error("微信接口响应超过安全大小限制");
   }
   try {
