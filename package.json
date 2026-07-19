@@ -19,6 +19,7 @@
     "send:test": "tsx src/cli/send-test.ts",
     "send:digest": "tsx src/cli/send-digest.ts",
     "scheduled": "tsx src/cli/scheduled.ts --project-root \"/Users/kdnsna/Documents/微信 chat\"",
+    "observer": "tsx src/cli/observer.ts --project-root \"/Users/kdnsna/Documents/微信 chat\" --job daily-tech-digest",
     "health": "tsx src/cli/health.ts"
   },
   "dependencies": {
