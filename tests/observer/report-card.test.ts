@@ -116,6 +116,44 @@ function svgTextEntries(svg: string): readonly { y: number; text: string }[] {
   );
 }
 
+function expectNoDynamicInkPastContentEdge(
+  svg: string,
+  verticalBands: readonly (readonly [number, number])[],
+): void {
+  const image = new Resvg(svg, {
+    fitTo: { mode: "width", value: 1080 },
+    font: {
+      loadSystemFonts: true,
+      defaultFontFamily: "PingFang SC",
+    },
+  }).render();
+  expect(image.asPng().subarray(0, 8)).toEqual(
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  );
+
+  const pixels = image.pixels;
+  const unexpectedInk: Array<{
+    readonly x: number;
+    readonly y: number;
+    readonly rgba: readonly number[];
+  }> = [];
+  for (const [top, bottom] of verticalBands) {
+    for (let y = top; y <= bottom; y += 1) {
+      for (let x = 1017; x < image.width; x += 1) {
+        const offset = (y * image.width + x) * 4;
+        const rgba = [...pixels.subarray(offset, offset + 4)];
+        if (rgba.join(",") !== "241,245,249,255") {
+          unexpectedInk.push({ x, y, rgba });
+          if (unexpectedInk.length === 5) {
+            expect(unexpectedInk).toEqual([]);
+          }
+        }
+      }
+    }
+  }
+  expect(unexpectedInk).toEqual([]);
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   for (const root of roots.splice(0)) {
@@ -230,6 +268,67 @@ describe("report card SVG", () => {
     expect(svg).not.toContain("\uffff");
     expect(svg).not.toContain(loneHighSurrogate);
     expect(svg).not.toContain(loneLowSurrogate);
+  });
+
+  it("fits mixed-width dynamic text inside the content pixel boundary", () => {
+    const mixed = "中😀Ab";
+    const value = {
+      ...report("failed", "9999-12-30T15:59:59.000Z"),
+      startedAt: "2000-01-01T00:00:00.000Z",
+      durationMs:
+        Date.parse("9999-12-30T15:59:59.000Z") -
+        Date.parse("2000-01-01T00:00:00.000Z"),
+      projectLabel: `PROJECT-${mixed.repeat(20)}`,
+      taskName: `TASK-${mixed.repeat(45)}`,
+      summary: [`SUMMARY-${"中".repeat(70)}-${mixed.repeat(60)}`],
+      metrics: [
+        {
+          label: `LABEL-${mixed.repeat(30)}`,
+          value: `VALUE-${mixed.repeat(100)}`,
+        },
+      ],
+      failure: `FAILURE-${mixed.repeat(200)}`,
+      artifacts: Array.from(
+        { length: 32 },
+        (_, index) => `output/artifact-${index}.md`,
+      ),
+    } as RunReport;
+
+    const svg = buildReportCardSvg(value);
+    const entries = svgTextEntries(svg);
+    const dynamic = (prefix: string) =>
+      entries.filter(({ text }) => text.startsWith(prefix));
+
+    expect(dynamic("PROJECT-")).toHaveLength(1);
+    expect(dynamic("PROJECT-")[0]?.text).toMatch(/…$/u);
+    expect(dynamic("TASK-")).toHaveLength(1);
+    expect(dynamic("TASK-")[0]?.text).toMatch(/…$/u);
+    expect(dynamic("• SUMMARY-")).toHaveLength(1);
+    expect(entries.filter(({ text }) => text.startsWith("• "))).toHaveLength(2);
+    expect(entries.filter(({ text }) => text.startsWith("• "))[1]?.text).toMatch(
+      /…$/u,
+    );
+    expect(dynamic("LABEL-")[0]?.text).toMatch(/…$/u);
+    expect(dynamic("VALUE-")[0]?.text).toMatch(/…$/u);
+    expect(dynamic("FAILURE-")[0]?.text).toMatch(/…$/u);
+    expect(dynamic("Run ")).toHaveLength(1);
+    expect(dynamic("Duration ")).toHaveLength(1);
+    expect(svg).not.toContain(value.projectLabel);
+    expect(svg).not.toContain(value.taskName);
+    expect(svg).not.toContain(value.summary[0]);
+    expect(svg).not.toContain(value.metrics[0]?.label);
+    expect(svg).not.toContain(value.metrics[0]?.value);
+    expect(svg).not.toContain(value.failure ?? "");
+
+    expectNoDynamicInkPastContentEdge(svg, [
+      [104, 148],
+      [160, 232],
+      [265, 315],
+      [452, 714],
+      [800, 1160],
+      [1170, 1240],
+      [1280, 1360],
+    ]);
   });
 });
 

@@ -11,6 +11,9 @@ import { RunReportSchema, type RunReport } from "./run-report.js";
 
 const CARD_WIDTH = 1080;
 const CARD_HEIGHT = 1440;
+const CONTENT_RIGHT = 1016;
+const TEXT_EDGE_PADDING = 20;
+const METRIC_LABEL_RIGHT = 438;
 const MAXIMUM_PNG_BYTES = 5 * 1_024 * 1_024;
 const PNG_SIGNATURE = Uint8Array.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -63,32 +66,136 @@ function escapeText(value: string): string {
     .replaceAll(":", "&#58;");
 }
 
-function wrappedLines(
+type FontSize = 24 | 28 | 32 | 40 | 56;
+
+function isEmojiCodePoint(codePoint: number): boolean {
+  return (
+    (codePoint >= 0x1f000 && codePoint <= 0x1faff) ||
+    (codePoint >= 0x2600 && codePoint <= 0x27bf)
+  );
+}
+
+function estimatedCodePointWidth(character: string, fontSize: FontSize): number {
+  const codePoint = character.codePointAt(0) ?? 0;
+  if (isEmojiCodePoint(codePoint)) {
+    // Color-emoji fallback fonts can add substantial shaping advance.
+    return fontSize * 2;
+  }
+  if (codePoint > 0x7f) {
+    return fontSize * 1.1;
+  }
+  if (character === " ") {
+    return fontSize * 0.4;
+  }
+  if (/[ilI1|.,:;'!`]/u.test(character)) {
+    return fontSize * 0.45;
+  }
+  if (/[MW@#%&]/u.test(character)) {
+    return fontSize;
+  }
+  return fontSize * 0.75;
+}
+
+function estimatedTextWidth(value: string, fontSize: FontSize): number {
+  let width = 0;
+  let sawEmoji = false;
+  for (const character of value) {
+    const emoji = isEmojiCodePoint(character.codePointAt(0) ?? 0);
+    if (emoji && !sawEmoji) {
+      width += fontSize * 4;
+      sawEmoji = true;
+    }
+    width += estimatedCodePointWidth(character, fontSize);
+  }
+  return width;
+}
+
+function prefixWithinPixelBudget(
+  characters: readonly string[],
+  fontSize: FontSize,
+  maximumPixelWidth: number,
+): readonly string[] {
+  let width = 0;
+  let end = 0;
+  let sawEmoji = false;
+  while (end < characters.length) {
+    const character = characters[end] ?? "";
+    const emoji = isEmojiCodePoint(character.codePointAt(0) ?? 0);
+    const fallbackAdvance = emoji && !sawEmoji ? fontSize * 4 : 0;
+    const nextWidth =
+      width +
+      fallbackAdvance +
+      estimatedCodePointWidth(character, fontSize);
+    if (nextWidth > maximumPixelWidth) {
+      break;
+    }
+    width = nextWidth;
+    sawEmoji ||= emoji;
+    end += 1;
+  }
+  return characters.slice(0, end);
+}
+
+function fitTextLines(
   value: string,
-  maximumCharacters: number,
+  fontSize: FontSize,
+  maximumPixelWidth: number,
   maximumLines: number,
 ): readonly string[] {
   const characters = [...value];
   const lines: string[] = [];
-  for (
-    let offset = 0;
-    offset < characters.length && lines.length < maximumLines;
-    offset += maximumCharacters
-  ) {
-    const end = Math.min(offset + maximumCharacters, characters.length);
-    let line = characters.slice(offset, end).join("");
-    if (end < characters.length && lines.length === maximumLines - 1) {
-      line = `${characters.slice(offset, Math.max(offset, end - 1)).join("")}…`;
+  let offset = 0;
+  while (offset < characters.length && lines.length < maximumLines) {
+    const remaining = characters.slice(offset);
+    if (estimatedTextWidth(remaining.join(""), fontSize) <= maximumPixelWidth) {
+      lines.push(remaining.join(""));
+      offset = characters.length;
+      break;
     }
-    lines.push(line);
+
+    const lastLine = lines.length === maximumLines - 1;
+    const ellipsisWidth = lastLine
+      ? estimatedCodePointWidth("…", fontSize)
+      : 0;
+    const prefix = prefixWithinPixelBudget(
+      remaining,
+      fontSize,
+      maximumPixelWidth - ellipsisWidth,
+    );
+    if (prefix.length === 0) {
+      lines.push(lastLine ? "…" : remaining[0] ?? "");
+      offset += 1;
+    } else {
+      lines.push(`${prefix.join("")}${lastLine ? "…" : ""}`);
+      offset += prefix.length;
+    }
+    if (lastLine) {
+      break;
+    }
   }
   return lines.length === 0 ? [""] : lines;
+}
+
+function singleLine(
+  value: string,
+  fontSize: FontSize,
+  x: number,
+  right = CONTENT_RIGHT,
+): string {
+  return (
+    fitTextLines(
+      value,
+      fontSize,
+      right - x - TEXT_EDGE_PADDING,
+      1,
+    )[0] ?? ""
+  );
 }
 
 function textNode(
   x: number,
   y: number,
-  size: 24 | 28 | 32 | 40 | 56,
+  size: FontSize,
   weight: 400 | 500 | 600 | 700,
   value: string,
   color = "#0f172a",
@@ -275,11 +382,25 @@ export function buildReportCardSvg(report: RunReport): string {
     `<rect width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="#f1f5f9"/>`,
     '<rect x="64" y="64" width="952" height="1312" rx="32" fill="#ffffff"/>',
     '<rect x="64" y="64" width="16" height="1312" rx="8" fill="#0f172a"/>',
-    textNode(112, 142, 32, 600, report.projectLabel, "#475569"),
-    textNode(112, 220, 56, 700, report.taskName),
+    textNode(
+      112,
+      142,
+      32,
+      600,
+      singleLine(report.projectLabel, 32, 112),
+      "#475569",
+    ),
+    textNode(112, 220, 56, 700, singleLine(report.taskName, 56, 112)),
     `<rect x="112" y="266" width="300" height="64" rx="32" fill="${status.color}"/>`,
     textNode(144, 310, 28, 700, status.label, "#ffffff"),
-    textNode(696, 294, 24, 500, `${finished.date} ${finished.time}`, "#475569"),
+    textNode(
+      696,
+      294,
+      24,
+      500,
+      singleLine(`${finished.date} ${finished.time}`, 24, 696),
+      "#475569",
+    ),
     '<line x1="112" y1="374" x2="968" y2="374" stroke="#cbd5e1" stroke-width="2"/>',
     textNode(112, 432, 28, 700, "SUMMARY", "#475569"),
   );
@@ -287,7 +408,15 @@ export function buildReportCardSvg(report: RunReport): string {
   let summaryY = 484;
   const displayedSummary = report.summary.slice(0, 3);
   const summaryLines = displayedSummary.flatMap((item) =>
-    wrappedLines(item, 35, 2),
+    fitTextLines(
+      item,
+      32,
+      CONTENT_RIGHT -
+        132 -
+        TEXT_EDGE_PADDING -
+        estimatedTextWidth("• ", 32),
+      2,
+    ),
   );
   for (const line of summaryLines) {
     nodes.push(textNode(132, summaryY, 32, 500, `• ${line}`));
@@ -301,7 +430,11 @@ export function buildReportCardSvg(report: RunReport): string {
         704,
         24,
         500,
-        omittedItemText(omittedSummaryItems, "summary item"),
+        singleLine(
+          omittedItemText(omittedSummaryItems, "summary item"),
+          24,
+          132,
+        ),
         "#64748b",
       ),
     );
@@ -314,8 +447,8 @@ export function buildReportCardSvg(report: RunReport): string {
   let metricY = 832;
   const displayedMetrics = report.metrics.slice(0, 6);
   for (const metric of displayedMetrics) {
-    const label = wrappedLines(metric.label, 12, 1)[0] ?? "";
-    const value = wrappedLines(metric.value, 24, 1)[0] ?? "";
+    const label = singleLine(metric.label, 24, 136, METRIC_LABEL_RIGHT);
+    const value = singleLine(metric.value, 28, 450);
     nodes.push(
       `<rect x="112" y="${metricY - 34}" width="856" height="44" rx="12" fill="#f8fafc"/>`,
       textNode(136, metricY, 24, 600, label, "#475569"),
@@ -331,7 +464,7 @@ export function buildReportCardSvg(report: RunReport): string {
         1150,
         24,
         500,
-        omittedItemText(omittedMetrics, "metric"),
+        singleLine(omittedItemText(omittedMetrics, "metric"), 24, 136),
         "#64748b",
       ),
     );
@@ -345,7 +478,7 @@ export function buildReportCardSvg(report: RunReport): string {
         1230,
         24,
         500,
-        wrappedLines(report.failure, 48, 1)[0] ?? "",
+        singleLine(report.failure, 24, 112),
         "#334155",
       ),
     );
@@ -353,13 +486,24 @@ export function buildReportCardSvg(report: RunReport): string {
 
   nodes.push(
     '<line x1="112" y1="1272" x2="968" y2="1272" stroke="#e2e8f0" stroke-width="2"/>',
-    textNode(112, 1312, 24, 500, `Run ${report.runId}`, "#64748b"),
+    textNode(
+      112,
+      1312,
+      24,
+      500,
+      singleLine(`Run ${report.runId}`, 24, 112),
+      "#64748b",
+    ),
     textNode(
       112,
       1348,
       24,
       500,
-      `Duration ${report.durationMs} ms · Artifacts ${report.artifacts.length}`,
+      singleLine(
+        `Duration ${report.durationMs} ms · Artifacts ${report.artifacts.length}`,
+        24,
+        112,
+      ),
       "#64748b",
     ),
     "</svg>",
