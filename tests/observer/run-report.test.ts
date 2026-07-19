@@ -204,6 +204,18 @@ describe("sanitizeReportText", () => {
     ).toBe('failed at "[LOCAL_PATH]". Continue.');
   });
 
+  it("fails closed to line end when a quoted home path is unterminated", () => {
+    const result = sanitizeReportText(
+      'failed at "/Users/alice/Team"Blue/file.txt',
+      options,
+    );
+
+    expect(result).toBe('failed at "[LOCAL_PATH]');
+    for (const fragment of ["alice", "Blue", "file.txt"]) {
+      expect(result?.includes(fragment)).toBe(false);
+    }
+  });
+
   it("replaces URL-shaped text after path handling", () => {
     expect(
       sanitizeReportText(
@@ -403,6 +415,25 @@ describe("buildRunReport", () => {
     ]);
     const serialized = JSON.stringify(report);
     for (const fragment of ["alice", "蓝色", "file.txt"]) {
+      expect(serialized.includes(fragment)).toBe(false);
+    }
+  });
+
+  it("does not retain an unterminated quoted path tail in a built report", () => {
+    const report = buildRunReport({
+      authority,
+      projectRoot: "/opt/example/private-project",
+      draft: {
+        version: 1,
+        summary: ['failed at "/Users/alice/Team"Blue/file.txt'],
+        metrics: [],
+        artifacts: [],
+      },
+    });
+
+    expect(report.summary).toEqual(['failed at "[LOCAL_PATH]']);
+    const serialized = JSON.stringify(report);
+    for (const fragment of ["alice", "Blue", "file.txt"]) {
       expect(serialized.includes(fragment)).toBe(false);
     }
   });

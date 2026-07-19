@@ -23,6 +23,17 @@ const BIDI_CONTROL_CHARACTERS = /[\u202a-\u202e\u2066-\u2069]/gu;
 const UNQUOTED_HOME_PATH =
   /\/(?:Users|home)\/[^\r\n<>]+?(?=\s+\/(?:Users|home)\/|[。！？；，]|[.!?,;:](?=\s|$)|[\])}](?=\s|$)|$)/gu;
 const URL_TEXT = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/giu;
+const TRUSTED_ASCII_QUOTED_PATH_BOUNDARIES = new Set([
+  ".",
+  "!",
+  "?",
+  ",",
+  ";",
+  ":",
+  ")",
+  "]",
+  "}",
+]);
 
 interface QuotedHomeOpening {
   readonly index: number;
@@ -48,6 +59,21 @@ function findQuotedHomeOpening(
   return null;
 }
 
+function isTrustedQuotedHomeClosingBoundary(
+  line: string,
+  closingIndex: number,
+): boolean {
+  const nextCharacter = line[closingIndex + 1];
+  if (nextCharacter === undefined) {
+    return true;
+  }
+  return (
+    nextCharacter.charCodeAt(0) > 0x7f ||
+    /\s/u.test(nextCharacter) ||
+    TRUSTED_ASCII_QUOTED_PATH_BOUNDARIES.has(nextCharacter)
+  );
+}
+
 function redactQuotedHomePathsInLine(line: string): string {
   let cursor = 0;
   let result = "";
@@ -61,8 +87,11 @@ function redactQuotedHomePathsInLine(line: string): string {
     // POSIX names can contain unescaped quotes. Taking the line's last matching
     // quote fails closed: ambiguous text may be over-redacted, but no path tail leaks.
     const closingIndex = line.lastIndexOf(opening.quote);
-    if (closingIndex <= opening.index) {
-      return result + line.slice(opening.index);
+    if (
+      closingIndex <= opening.index ||
+      !isTrustedQuotedHomeClosingBoundary(line, closingIndex)
+    ) {
+      return result + `${opening.quote}[LOCAL_PATH]`;
     }
 
     result += `${opening.quote}[LOCAL_PATH]${opening.quote}`;
