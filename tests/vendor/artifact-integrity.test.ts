@@ -16,6 +16,7 @@ const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 const roots: string[] = [];
 const artifacts = [
   "ilink/auth.js",
+  "ilink/client.js",
   "utils/http.js",
   "utils/logger.js",
   "utils/crypto.js",
@@ -51,11 +52,11 @@ describe("reviewed WeChat runtime artifact closure", () => {
     expect(() => verifyVendorWechatArtifacts(repositoryRoot)).not.toThrow();
   });
 
-  it("rejects a modified ignored dist artifact before dynamic import", () => {
+  it("rejects a modified audited dist artifact before dynamic import", () => {
     const root = fixtureProject();
     writeFileSync(
-      join(root, "vendor", "cli-in-wechat", "dist", "ilink", "auth.js"),
-      "export const login = async () => ({ compromised: true });\n",
+      join(root, "vendor", "cli-in-wechat", "dist", "ilink", "client.js"),
+      "export class ILinkClient { compromised = true; }\n",
       "utf8",
     );
 

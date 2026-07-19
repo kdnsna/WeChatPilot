@@ -6,6 +6,10 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import {
+  sendWechatReportImage,
+  WechatMediaPreparationError,
+} from "./wechat-media.js";
 import { readProjectText, writeProjectTextAtomic } from "../lib/project-file.js";
 import {
   assertNoSymlinkComponents,
@@ -25,6 +29,7 @@ const MAX_SEEN_INITIALIZATION_MESSAGE_IDS = 100;
 const VENDOR_UPSTREAM_COMMIT = "75d7db9338e133080fef9914b92ceb5e3ebd0dfc";
 const VENDOR_ARTIFACT_PATHS = [
   "ilink/auth.js",
+  "ilink/client.js",
   "utils/http.js",
   "utils/logger.js",
   "utils/crypto.js",
@@ -879,6 +884,60 @@ export async function sendWechatText(
   return await sender(options.text);
 }
 
+export interface PrepareWechatImageSenderOptions {
+  readonly projectRoot: string;
+  readonly vendor?: VendorWechatAdapter;
+  readonly signal?: AbortSignal;
+  readonly randomBytes?: (size: number) => Buffer;
+  readonly clientId?: () => string;
+}
+
+export interface SendWechatImageOptions
+  extends PrepareWechatImageSenderOptions {
+  readonly imagePath: string;
+}
+
+export type PreparedWechatImageSender = (
+  imagePath: string,
+) => Promise<{ readonly status: "sent" }>;
+
+export async function prepareWechatImageSender(
+  options: PrepareWechatImageSenderOptions,
+): Promise<PreparedWechatImageSender> {
+  const state = validatedBoundState(options.projectRoot);
+  const vendor =
+    options.vendor ?? (await loadVendorWechatAdapter(options.projectRoot));
+  return async (imagePath: string) =>
+    await sendWechatReportImage({
+      projectRoot: options.projectRoot,
+      imagePath,
+      session: {
+        apiBaseUrl: state.credentials.baseUrl.replace(/\/$/u, ""),
+        botToken: state.credentials.botToken,
+        ownerUserId: state.credentials.ilinkUserId,
+        contextToken: state.context.contextToken,
+      },
+      adapter: vendor,
+      errors: {
+        indeterminate: () => new WechatDeliveryIndeterminateError(),
+        rejected: () => new WechatDeliveryRejectedError(),
+        loginExpired: () => new WechatLoginExpiredError(),
+      },
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.randomBytes === undefined
+        ? {}
+        : { randomBytes: options.randomBytes }),
+      ...(options.clientId === undefined ? {} : { clientId: options.clientId }),
+    });
+}
+
+export async function sendWechatImage(
+  options: SendWechatImageOptions,
+): Promise<{ readonly status: "sent" }> {
+  const sender = await prepareWechatImageSender(options);
+  return await sender(options.imagePath);
+}
+
 interface VendorAuthModule {
   readonly login?: (
     onQrCode: (qrContent: string) => void,
@@ -1105,6 +1164,7 @@ export function publicWechatError(error: unknown): string {
     error instanceof WechatPartialDeliveryError ||
     error instanceof WechatDeliveryIndeterminateError ||
     error instanceof WechatDeliveryRejectedError ||
+    error instanceof WechatMediaPreparationError ||
     error instanceof RangeError
   ) {
     return error.message;

@@ -8,6 +8,11 @@
       "sha256": "0743aeb829d774a3f67b277df757db234750d6b3ce9347eac4465d29691da707"
     },
     {
+      "path": "ilink/client.js",
+      "bytes": 29893,
+      "sha256": "d4374ca607458c44321c58a4d2a9af7e040fbd21f055319533a89ce33d4c171b"
+    },
+    {
       "path": "utils/http.js",
       "bytes": 10625,
       "sha256": "1cd46b0e897aec2b58729403ded4380c4d9856a2e05697fc2f8f87489a6b0dfc"
