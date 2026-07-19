@@ -1,3 +1,4 @@
+import { lstatSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 import { Resvg } from "@resvg/resvg-js";
@@ -34,8 +35,25 @@ export interface ReportCardArtifact {
 }
 
 function escapeText(value: string): string {
-  return value
-    .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu, "")
+  const xmlSafe = [...value]
+    .filter((character) => {
+      const codePoint = character.codePointAt(0);
+      return (
+        codePoint !== undefined &&
+        (codePoint === 0x09 ||
+          codePoint === 0x0a ||
+          codePoint === 0x0d ||
+          (codePoint >= 0x20 && codePoint <= 0xd7ff) ||
+          (codePoint >= 0xe000 && codePoint <= 0xfffd) ||
+          (codePoint >= 0x1_0000 && codePoint <= 0x10_ffff)) &&
+        !(codePoint >= 0x7f && codePoint <= 0x9f) &&
+        !(codePoint >= 0x202a && codePoint <= 0x202e) &&
+        !(codePoint >= 0x2066 && codePoint <= 0x2069)
+      );
+    })
+    .join("");
+
+  return xmlSafe
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -126,8 +144,19 @@ function stableReportJson(report: RunReport): string {
   return `${JSON.stringify(stableValue(report), null, 2)}\n`;
 }
 
+function crc32(bytes: Uint8Array, start: number, end: number): number {
+  let crc = 0xffff_ffff;
+  for (let index = start; index < end; index += 1) {
+    crc ^= bytes[index] ?? 0;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb8_8320 : 0);
+    }
+  }
+  return (crc ^ 0xffff_ffff) >>> 0;
+}
+
 function validPng(png: Uint8Array): boolean {
-  if (png.byteLength > MAXIMUM_PNG_BYTES || png.byteLength < 24) {
+  if (png.byteLength > MAXIMUM_PNG_BYTES || png.byteLength < 45) {
     return false;
   }
   for (let index = 0; index < PNG_SIGNATURE.length; index += 1) {
@@ -136,15 +165,104 @@ function validPng(png: Uint8Array): boolean {
     }
   }
   const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
-  return (
-    view.getUint32(8) === 13 &&
-    png[12] === 0x49 &&
-    png[13] === 0x48 &&
-    png[14] === 0x44 &&
-    png[15] === 0x52 &&
-    view.getUint32(16) === CARD_WIDTH &&
-    view.getUint32(20) === CARD_HEIGHT
-  );
+  let offset = PNG_SIGNATURE.length;
+  let chunkIndex = 0;
+  let sawImageData = false;
+
+  while (offset < png.byteLength) {
+    if (png.byteLength - offset < 12) {
+      return false;
+    }
+
+    const dataLength = view.getUint32(offset);
+    const typeOffset = offset + 4;
+    const dataOffset = typeOffset + 4;
+    const crcOffset = dataOffset + dataLength;
+    const nextOffset = crcOffset + 4;
+    if (nextOffset > png.byteLength) {
+      return false;
+    }
+
+    const typeBytes = png.subarray(typeOffset, dataOffset);
+    if (!typeBytes.every((byte) =>
+      (byte >= 0x41 && byte <= 0x5a) || (byte >= 0x61 && byte <= 0x7a),
+    )) {
+      return false;
+    }
+    const type = String.fromCharCode(...typeBytes);
+    if (view.getUint32(crcOffset) !== crc32(png, typeOffset, crcOffset)) {
+      return false;
+    }
+
+    if (chunkIndex === 0) {
+      if (
+        type !== "IHDR" ||
+        dataLength !== 13 ||
+        view.getUint32(dataOffset) !== CARD_WIDTH ||
+        view.getUint32(dataOffset + 4) !== CARD_HEIGHT
+      ) {
+        return false;
+      }
+    } else if (type === "IHDR") {
+      return false;
+    }
+
+    if (type === "IDAT") {
+      sawImageData = true;
+    }
+    if (type === "IEND") {
+      return dataLength === 0 && sawImageData && nextOffset === png.byteLength;
+    }
+
+    offset = nextOffset;
+    chunkIndex += 1;
+  }
+
+  return false;
+}
+
+function omittedItemText(count: number, noun: "summary item" | "metric"): string {
+  return `${count} more ${noun}${count === 1 ? "" : "s"} omitted`;
+}
+
+function pathExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+interface FileIdentity {
+  readonly device: number;
+  readonly inode: number;
+}
+
+function regularFileIdentity(path: string): FileIdentity {
+  const metadata = lstatSync(path);
+  if (!metadata.isFile()) {
+    throw new Error(SAFE_RENDER_ERROR);
+  }
+  return { device: metadata.dev, inode: metadata.ino };
+}
+
+function removeNewRegularFile(path: string, identity: FileIdentity): void {
+  try {
+    const metadata = lstatSync(path);
+    if (
+      metadata.isFile() &&
+      metadata.dev === identity.device &&
+      metadata.ino === identity.inode
+    ) {
+      unlinkSync(path);
+    }
+  } catch {
+    // Rollback is limited to the regular JSON file created by this invocation.
+  }
 }
 
 export function buildReportCardSvg(report: RunReport): string {
@@ -167,36 +285,64 @@ export function buildReportCardSvg(report: RunReport): string {
   );
 
   let summaryY = 484;
-  const summaryLines = report.summary.flatMap((item) => wrappedLines(item, 35, 2));
-  for (const line of summaryLines.slice(0, 8)) {
+  const displayedSummary = report.summary.slice(0, 3);
+  const summaryLines = displayedSummary.flatMap((item) =>
+    wrappedLines(item, 35, 2),
+  );
+  for (const line of summaryLines) {
     nodes.push(textNode(132, summaryY, 32, 500, `• ${line}`));
-    summaryY += 48;
+    summaryY += 36;
+  }
+  const omittedSummaryItems = report.summary.length - displayedSummary.length;
+  if (omittedSummaryItems > 0) {
+    nodes.push(
+      textNode(
+        132,
+        704,
+        24,
+        500,
+        omittedItemText(omittedSummaryItems, "summary item"),
+        "#64748b",
+      ),
+    );
   }
 
-  const metricsTop = Math.max(704, summaryY + 24);
   nodes.push(
-    `<line x1="112" y1="${metricsTop - 36}" x2="968" y2="${metricsTop - 36}" stroke="#e2e8f0" stroke-width="2"/>`,
-    textNode(112, metricsTop, 28, 700, "METRICS", "#475569"),
+    '<line x1="112" y1="744" x2="968" y2="744" stroke="#e2e8f0" stroke-width="2"/>',
+    textNode(112, 786, 28, 700, "METRICS", "#475569"),
   );
-  let metricY = metricsTop + 58;
-  for (const metric of report.metrics.slice(0, 6)) {
+  let metricY = 832;
+  const displayedMetrics = report.metrics.slice(0, 6);
+  for (const metric of displayedMetrics) {
     const label = wrappedLines(metric.label, 12, 1)[0] ?? "";
     const value = wrappedLines(metric.value, 24, 1)[0] ?? "";
     nodes.push(
-      `<rect x="112" y="${metricY - 38}" width="856" height="54" rx="12" fill="#f8fafc"/>`,
+      `<rect x="112" y="${metricY - 34}" width="856" height="44" rx="12" fill="#f8fafc"/>`,
       textNode(136, metricY, 24, 600, label, "#475569"),
       textNode(450, metricY, 28, 600, value),
     );
-    metricY += 66;
+    metricY += 54;
+  }
+  const omittedMetrics = report.metrics.length - displayedMetrics.length;
+  if (omittedMetrics > 0) {
+    nodes.push(
+      textNode(
+        136,
+        1150,
+        24,
+        500,
+        omittedItemText(omittedMetrics, "metric"),
+        "#64748b",
+      ),
+    );
   }
 
   if (report.failure !== null) {
-    const failureY = Math.min(1160, metricY + 28);
     nodes.push(
-      textNode(112, failureY, 28, 700, "DETAIL", status.color),
+      textNode(112, 1188, 28, 700, "DETAIL", status.color),
       textNode(
         112,
-        failureY + 48,
+        1230,
         24,
         500,
         wrappedLines(report.failure, 48, 1)[0] ?? "",
@@ -206,11 +352,11 @@ export function buildReportCardSvg(report: RunReport): string {
   }
 
   nodes.push(
-    '<line x1="112" y1="1260" x2="968" y2="1260" stroke="#e2e8f0" stroke-width="2"/>',
-    textNode(112, 1314, 24, 500, `Run ${report.runId}`, "#64748b"),
+    '<line x1="112" y1="1272" x2="968" y2="1272" stroke="#e2e8f0" stroke-width="2"/>',
+    textNode(112, 1312, 24, 500, `Run ${report.runId}`, "#64748b"),
     textNode(
       112,
-      1350,
+      1348,
       24,
       500,
       `Duration ${report.durationMs} ms · Artifacts ${report.artifacts.length}`,
@@ -240,6 +386,9 @@ export function renderReportCard({
     );
     const pngPath = join(outputDirectory, `${parsed.runId}.png`);
     const jsonPath = join(outputDirectory, `${parsed.runId}.json`);
+    if (pathExists(jsonPath) || pathExists(pngPath)) {
+      throw new Error(SAFE_RENDER_ERROR);
+    }
     const svg = buildReportCardSvg(parsed);
     const png = new Resvg(svg, {
       fitTo: { mode: "width", value: CARD_WIDTH },
@@ -256,9 +405,15 @@ export function renderReportCard({
     }
 
     const json = stableReportJson(parsed);
-    writeProjectBytesAtomic(projectRoot, pngPath, png);
     writeProjectTextAtomic(projectRoot, jsonPath, json);
-    return { pngPath, jsonPath };
+    const jsonIdentity = regularFileIdentity(jsonPath);
+    try {
+      writeProjectBytesAtomic(projectRoot, pngPath, png);
+      return { pngPath, jsonPath };
+    } catch {
+      removeNewRegularFile(jsonPath, jsonIdentity);
+      throw new Error(SAFE_RENDER_ERROR);
+    }
   } catch {
     throw new Error(SAFE_RENDER_ERROR);
   }
