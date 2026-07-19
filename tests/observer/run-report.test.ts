@@ -186,6 +186,15 @@ describe("sanitizeReportText", () => {
     ).toBe('failed at "[LOCAL_PATH]". Continue.');
   });
 
+  it("preserves non-ASCII text directly after a quoted home path", () => {
+    expect(
+      sanitizeReportText(
+        '打开 "/Users/alice/My Project/file.txt"然后继续',
+        options,
+      ),
+    ).toBe('打开 "[LOCAL_PATH]"然后继续');
+  });
+
   it("replaces URL-shaped text after path handling", () => {
     expect(
       sanitizeReportText(
@@ -343,6 +352,25 @@ describe("buildRunReport", () => {
     ]);
     const serialized = JSON.stringify(report);
     for (const fragment of ["alice", "Brien/file.txt", "bob", 'Blue"/file.txt']) {
+      expect(serialized.includes(fragment)).toBe(false);
+    }
+  });
+
+  it("preserves non-ASCII text after a quoted path in a built report", () => {
+    const report = buildRunReport({
+      authority,
+      projectRoot: "/opt/example/private-project",
+      draft: {
+        version: 1,
+        summary: ['打开 "/Users/alice/My Project/file.txt"然后继续'],
+        metrics: [],
+        artifacts: [],
+      },
+    });
+
+    expect(report.summary).toEqual(['打开 "[LOCAL_PATH]"然后继续']);
+    const serialized = JSON.stringify(report);
+    for (const fragment of ["alice", "My Project", "file.txt"]) {
       expect(serialized.includes(fragment)).toBe(false);
     }
   });
