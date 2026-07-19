@@ -10,8 +10,6 @@ import { isAbsolute } from "node:path";
 import { loadConfig } from "../config/load.js";
 import {
   inspectRunDeliveryState,
-  runDeliveryDisposition,
-  type RunDeliveryDisposition,
 } from "../delivery/run-report-delivery.js";
 import {
   verifyVendorWechatArtifacts,
@@ -93,10 +91,6 @@ export interface HealthProbes {
     readonly indeterminate: number;
     readonly invalid: number;
   };
-  readonly runDeliveryDisposition: (options: {
-    readonly projectRoot: string;
-    readonly report: RunReport;
-  }) => RunDeliveryDisposition;
 }
 
 export interface ProjectHealthReport {
@@ -227,7 +221,6 @@ const defaultProbes: HealthProbes = {
   inspectRunState,
   listFinalRunReports,
   inspectRunDeliveryState,
-  runDeliveryDisposition,
 };
 
 function status(value: boolean): CheckStatus {
@@ -523,6 +516,7 @@ export function inspectProjectHealth(
   try {
     const delivery = probes.inspectRunDeliveryState({
       projectRoot: paths.root,
+      reports,
     });
     const pending = safeCount(delivery.pending);
     const indeterminate = safeCount(delivery.indeterminate);
@@ -539,36 +533,6 @@ export function inspectProjectHealth(
     observerStateValid = false;
     invalidStateRecords += 1;
   }
-  try {
-    let missingFinalDeliveries = 0;
-    for (const report of reports) {
-      const disposition = probes.runDeliveryDisposition({
-        projectRoot: paths.root,
-        report,
-      });
-      if (disposition === "missing") {
-        missingFinalDeliveries += 1;
-      } else if (
-        disposition !== "retryable" &&
-        disposition !== "sent" &&
-        disposition !== "indeterminate" &&
-        disposition !== "blocked"
-      ) {
-        throw new Error("Invalid observer delivery disposition");
-      }
-    }
-    const combinedPending = safeCount(
-      pendingDeliveries + missingFinalDeliveries,
-    );
-    if (combinedPending === null) {
-      throw new Error("Invalid observer delivery count");
-    }
-    pendingDeliveries = combinedPending;
-  } catch {
-    observerStateValid = false;
-    invalidStateRecords += 1;
-  }
-
   if (pendingRecoveryReports > 0) {
     diagnostics.push("observer recovery pending");
   }

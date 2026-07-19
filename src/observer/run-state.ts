@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -36,6 +38,7 @@ const PositivePidSchema = z
   .int()
   .positive()
   .max(Number.MAX_SAFE_INTEGER);
+const ProcessIdentitySchema = z.string().regex(/^[a-f0-9]{64}$/u);
 
 const auditedAuthorityShape = {
   runId: z.uuid(),
@@ -51,9 +54,15 @@ const RunningRunRecordSchema = z
     status: z.literal("running"),
     ...auditedAuthorityShape,
     runnerPid: PositivePidSchema,
+    runnerIdentity: ProcessIdentitySchema.optional(),
     childPid: PositivePidSchema.optional(),
+    childIdentity: ProcessIdentitySchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (record) => record.childIdentity === undefined || record.childPid !== undefined,
+    "childIdentity requires childPid",
+  );
 
 const RecoveryPendingRunRecordSchema = z
   .object({
@@ -76,7 +85,9 @@ export interface RunningRunRecord {
   readonly taskName: string;
   readonly projectLabel: string;
   readonly runnerPid: number;
+  readonly runnerIdentity?: string;
   readonly childPid?: number;
+  readonly childIdentity?: string;
   readonly startedAt: string;
 }
 
@@ -97,19 +108,24 @@ export interface StartRunRecordOptions {
   readonly job: ObserverJob;
   readonly runnerPid: number;
   readonly startedAt: Date;
+  readonly processIdentity?: ProcessIdentityProbe;
 }
 
 export interface UpdateRunChildPidOptions {
   readonly projectRoot: string;
   readonly runId: string;
   readonly childPid: number;
+  readonly processIdentity?: ProcessIdentityProbe;
 }
 
 export interface RecoverInterruptedRunsOptions {
   readonly projectRoot: string;
   readonly now?: () => Date;
   readonly isProcessAlive?: (pid: number) => boolean;
+  readonly processIdentity?: ProcessIdentityProbe;
 }
+
+export type ProcessIdentityProbe = (pid: number) => string;
 
 export interface RecoverInterruptedRunsResult {
   readonly recovered: readonly RunAuthority[];
@@ -140,9 +156,16 @@ function normalizedRunningRecord(
     runnerPid: value.runnerPid,
     startedAt: value.startedAt,
   } as const;
-  return value.childPid === undefined
-    ? record
-    : { ...record, childPid: value.childPid };
+  return {
+    ...record,
+    ...(value.runnerIdentity === undefined
+      ? {}
+      : { runnerIdentity: value.runnerIdentity }),
+    ...(value.childPid === undefined ? {} : { childPid: value.childPid }),
+    ...(value.childIdentity === undefined
+      ? {}
+      : { childIdentity: value.childIdentity }),
+  };
 }
 
 function safeError(): Error {
@@ -378,11 +401,64 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
+function defaultProcessIdentity(pid: number): string {
+  try {
+    const parsedPid = PositivePidSchema.parse(pid);
+    const raw = execFileSync(
+      "/bin/ps",
+      ["-ww", "-p", String(parsedPid), "-o", "lstart=", "-o", "command="],
+      {
+        encoding: "utf8",
+        maxBuffer: 64 * 1_024,
+        stdio: ["ignore", "pipe", "ignore"],
+        env: {
+          ...process.env,
+          LANG: "C",
+          LC_ALL: "C",
+        },
+      },
+    );
+    if (raw.trim() === "") {
+      throw safeError();
+    }
+    return createHash("sha256").update(raw, "utf8").digest("hex");
+  } catch {
+    throw safeError();
+  }
+}
+
+function recordedProcessIsActive(
+  pid: number,
+  expectedIdentity: string | undefined,
+  alive: (pid: number) => boolean,
+  identity: ProcessIdentityProbe,
+): boolean {
+  try {
+    if (!alive(pid)) {
+      return false;
+    }
+  } catch {
+    return true;
+  }
+  if (expectedIdentity === undefined) {
+    return true;
+  }
+  try {
+    const current = ProcessIdentitySchema.safeParse(identity(pid));
+    return !current.success || current.data === expectedIdentity;
+  } catch {
+    return true;
+  }
+}
+
 export function startRunRecord(options: StartRunRecordOptions): RunningRunRecord {
   try {
     const parsedJob = ObserverJobSchema.parse(options.job);
     const runId = z.uuid().parse(options.runId);
     const runnerPid = PositivePidSchema.parse(options.runnerPid);
+    const runnerIdentity = ProcessIdentitySchema.parse(
+      (options.processIdentity ?? defaultProcessIdentity)(runnerPid),
+    );
     const startedAt = options.startedAt.toISOString();
     const record = RunningRunRecordSchema.parse({
       version: 1,
@@ -392,6 +468,7 @@ export function startRunRecord(options: StartRunRecordOptions): RunningRunRecord
       taskName: parsedJob.name,
       projectLabel: parsedJob.projectLabel,
       runnerPid,
+      runnerIdentity,
       startedAt,
     });
     createPrivateRunsDirectory(options.projectRoot);
@@ -416,6 +493,9 @@ export function updateRunChildPid(
   try {
     const runId = z.uuid().parse(options.runId);
     const childPid = PositivePidSchema.parse(options.childPid);
+    const childIdentity = ProcessIdentitySchema.parse(
+      (options.processIdentity ?? defaultProcessIdentity)(childPid),
+    );
     const current = recordForUpdate(options.projectRoot, runId);
     if (current.kind !== "running") {
       throw safeError();
@@ -423,6 +503,7 @@ export function updateRunChildPid(
     const updated = RunningRunRecordSchema.parse({
       ...current.value,
       childPid,
+      childIdentity,
     });
     writeRecord(options.projectRoot, runId, updated);
     return normalizedRunningRecord(updated);
@@ -472,6 +553,7 @@ export function recoverInterruptedRuns(
     const recovered: RunAuthority[] = [];
     const activeTaskIds = new Set<string>();
     const alive = options.isProcessAlive ?? processIsAlive;
+    const identity = options.processIdentity ?? defaultProcessIdentity;
     let invalidRecords = scan.invalidRecords;
 
     for (const entry of scan.records) {
@@ -479,14 +561,21 @@ export function recoverInterruptedRuns(
         continue;
       }
       const record = entry.value;
-      let runnerAlive = true;
-      let childAlive = false;
-      try {
-        runnerAlive = alive(record.runnerPid);
-        childAlive = record.childPid === undefined ? false : alive(record.childPid);
-      } catch {
-        runnerAlive = true;
-      }
+      const runnerAlive = recordedProcessIsActive(
+        record.runnerPid,
+        record.runnerIdentity,
+        alive,
+        identity,
+      );
+      const childAlive =
+        record.childPid === undefined
+          ? false
+          : recordedProcessIsActive(
+              record.childPid,
+              record.childIdentity,
+              alive,
+              identity,
+            );
       if (runnerAlive || childAlive) {
         activeTaskIds.add(record.taskId);
         continue;

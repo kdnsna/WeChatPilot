@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Resvg } from "@resvg/resvg-js";
 
 import {
+  readProjectBytes,
   writeProjectBytesAtomic,
   writeProjectTextAtomic,
 } from "../lib/project-file.js";
@@ -16,6 +17,7 @@ const CONTENT_RIGHT = 1016;
 const TEXT_EDGE_PADDING = 20;
 const METRIC_LABEL_RIGHT = 438;
 const MAXIMUM_PNG_BYTES = 5 * 1_024 * 1_024;
+const MAXIMUM_JSON_BYTES = 256 * 1_024;
 const SAFE_RENDER_ERROR = "Unable to render report card";
 
 const STATUS_PRESENTATION: Record<
@@ -451,8 +453,35 @@ export function renderReportCard({
     );
     const pngPath = join(outputDirectory, `${parsed.runId}.png`);
     const jsonPath = join(outputDirectory, `${parsed.runId}.json`);
-    if (pathExists(jsonPath) || pathExists(pngPath)) {
-      throw new Error(SAFE_RENDER_ERROR);
+    const jsonExists = pathExists(jsonPath);
+    const pngExists = pathExists(pngPath);
+    if (jsonExists || pngExists) {
+      if (!jsonExists || !pngExists) {
+        throw new Error(SAFE_RENDER_ERROR);
+      }
+      const json = readProjectBytes(
+        projectRoot,
+        jsonPath,
+        MAXIMUM_JSON_BYTES,
+      );
+      const png = readProjectBytes(
+        projectRoot,
+        pngPath,
+        MAXIMUM_PNG_BYTES,
+      );
+      if (
+        json === null ||
+        png === null ||
+        !json.equals(Buffer.from(stableReportJson(parsed), "utf8")) ||
+        !isValidPng(png, {
+          width: CARD_WIDTH,
+          height: CARD_HEIGHT,
+          maximumBytes: MAXIMUM_PNG_BYTES,
+        })
+      ) {
+        throw new Error(SAFE_RENDER_ERROR);
+      }
+      return { pngPath, jsonPath };
     }
     const svg = buildReportCardSvg(parsed);
     const png = new Resvg(svg, {

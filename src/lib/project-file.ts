@@ -4,9 +4,11 @@ import {
   constants,
   fstatSync,
   fsyncSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
+  readSync,
   renameSync,
   unlinkSync,
   writeSync,
@@ -25,6 +27,105 @@ function safePath(projectRoot: string, filePath: string): string {
 
 function missing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+function sameFile(
+  left: { readonly dev: number; readonly ino: number },
+  right: { readonly dev: number; readonly ino: number },
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+export function readProjectBytes(
+  projectRoot: string,
+  filePath: string,
+  maximumBytes: number,
+): Buffer | null {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes <= 0) {
+    throw new RangeError("maximumBytes must be a positive safe integer");
+  }
+  const target = safePath(projectRoot, filePath);
+  let descriptor: number | undefined;
+  try {
+    const pathMetadata = lstatSync(target);
+    const parentMetadata = lstatSync(dirname(target));
+    if (
+      pathMetadata.isSymbolicLink() ||
+      !pathMetadata.isFile() ||
+      (pathMetadata.mode & 0o777) !== 0o600 ||
+      parentMetadata.isSymbolicLink() ||
+      !parentMetadata.isDirectory() ||
+      (parentMetadata.mode & 0o777) !== 0o700
+    ) {
+      throw new Error("Project path is not a private regular file");
+    }
+    if (pathMetadata.size > maximumBytes) {
+      throw new RangeError("Project file exceeded the configured size limit");
+    }
+    descriptor = openSync(
+      target,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+    );
+    const before = fstatSync(descriptor);
+    if (
+      !before.isFile() ||
+      (before.mode & 0o777) !== 0o600 ||
+      before.size !== pathMetadata.size ||
+      before.size > maximumBytes ||
+      !sameFile(before, pathMetadata)
+    ) {
+      throw new Error("Project path is not a private regular file");
+    }
+
+    const content = Buffer.alloc(before.size);
+    let offset = 0;
+    while (offset < content.byteLength) {
+      const bytesRead = readSync(
+        descriptor,
+        content,
+        offset,
+        content.byteLength - offset,
+        null,
+      );
+      if (bytesRead === 0) {
+        throw new Error("Project file changed during read");
+      }
+      offset += bytesRead;
+    }
+    const after = fstatSync(descriptor);
+    assertNoSymlinkComponents(projectRoot, target);
+    const finalPath = lstatSync(target);
+    const finalParent = lstatSync(dirname(target));
+    if (
+      !sameFile(before, after) ||
+      !sameFile(before, finalPath) ||
+      !sameFile(parentMetadata, finalParent) ||
+      finalPath.isSymbolicLink() ||
+      !finalPath.isFile() ||
+      finalParent.isSymbolicLink() ||
+      !finalParent.isDirectory() ||
+      (finalPath.mode & 0o777) !== 0o600 ||
+      (finalParent.mode & 0o777) !== 0o700 ||
+      after.size !== before.size ||
+      finalPath.size !== before.size ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs ||
+      finalPath.mtimeMs !== before.mtimeMs ||
+      finalPath.ctimeMs !== before.ctimeMs
+    ) {
+      throw new Error("Project file changed during read");
+    }
+    return content;
+  } catch (error) {
+    if (missing(error)) {
+      return null;
+    }
+    throw error;
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
+  }
 }
 
 export function readProjectText(

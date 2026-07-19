@@ -21,8 +21,10 @@ import {
   inspectRunState,
   listFinalRunReports,
   recoverInterruptedRuns,
-  startRunRecord,
-  updateRunChildPid,
+  startRunRecord as startRunRecordRaw,
+  updateRunChildPid as updateRunChildPidRaw,
+  type StartRunRecordOptions,
+  type UpdateRunChildPidOptions,
 } from "../../src/observer/run-state.js";
 
 const job: ObserverJob = {
@@ -50,6 +52,18 @@ const ids = {
 } as const;
 
 const roots: string[] = [];
+
+function identity(pid: number): string {
+  return pid.toString(16).padStart(64, "0");
+}
+
+function startRunRecord(options: StartRunRecordOptions) {
+  return startRunRecordRaw({ ...options, processIdentity: identity });
+}
+
+function updateRunChildPid(options: UpdateRunChildPidOptions) {
+  return updateRunChildPidRaw({ ...options, processIdentity: identity });
+}
 
 function root(): string {
   const directory = mkdtempSync(join(tmpdir(), "wechatpilot-run-state-"));
@@ -191,12 +205,20 @@ describe("observer run-state journal", () => {
     });
 
     expect(running.status).toBe("running");
+    expect(running.runnerIdentity).toBe(identity(1234));
     expect(readdirSync(runsDirectory(projectRoot))).toEqual([`${ids.main}.json`]);
     expect(statSync(join(projectRoot, ".state")).mode & 0o777).toBe(0o700);
     expect(statSync(join(projectRoot, ".state", "observer")).mode & 0o777).toBe(0o700);
     expect(statSync(runsDirectory(projectRoot)).mode & 0o777).toBe(0o700);
     expect(statSync(runPath(projectRoot, ids.main)).mode & 0o777).toBe(0o600);
 
+    expect(
+      updateRunChildPid({
+        projectRoot,
+        runId: running.runId,
+        childPid: 5678,
+      }).childIdentity,
+    ).toBe(identity(5678));
     expect(
       updateRunChildPid({
         projectRoot,
@@ -245,6 +267,25 @@ describe("observer run-state journal", () => {
     ).toEqual({ recovered: [], activeTaskIds: [], invalidRecords: 0 });
   });
 
+  it("stores only a SHA-256 identity for the current production runner", () => {
+    const projectRoot = root();
+    const running = startRunRecordRaw({
+      projectRoot,
+      runId: ids.main,
+      job,
+      runnerPid: process.pid,
+      startedAt: new Date("2026-07-19T01:00:00.000Z"),
+    });
+    const persisted = JSON.parse(
+      readFileSync(runPath(projectRoot, ids.main), "utf8"),
+    ) as Record<string, unknown>;
+
+    expect(running.runnerIdentity).toMatch(/^[a-f0-9]{64}$/u);
+    expect(persisted.runnerIdentity).toBe(running.runnerIdentity);
+    expect(persisted).not.toHaveProperty("command");
+    expect(JSON.stringify(persisted)).not.toContain(process.argv.join(" "));
+  });
+
   it("keeps a task active when either runner or child is alive and de-duplicates ids", () => {
     const projectRoot = root();
     for (const [runId, runnerPid, childPid] of [
@@ -277,6 +318,93 @@ describe("observer run-state journal", () => {
     });
   });
 
+  it("uses process identity to distinguish active processes from reused pids", () => {
+    const projectRoot = root();
+    for (const [runId, runnerPid, childPid] of [
+      [ids.first, 101, 102],
+      [ids.main, 201, 202],
+      [ids.third, 301, 302],
+    ] as const) {
+      startRunRecord({
+        projectRoot,
+        runId,
+        job,
+        runnerPid,
+        startedAt: new Date("2026-07-19T01:00:00.000Z"),
+      });
+      updateRunChildPid({ projectRoot, runId, childPid });
+    }
+
+    const result = recoverInterruptedRuns({
+      projectRoot,
+      now: () => new Date("2026-07-19T01:05:00.000Z"),
+      isProcessAlive: (pid) => pid !== 301,
+      processIdentity: (pid) => {
+        if (pid === 102) return identity(pid);
+        if (pid === 101 || pid === 201 || pid === 202 || pid === 302) {
+          return "f".repeat(64);
+        }
+        return identity(pid);
+      },
+    });
+
+    expect(result.activeTaskIds).toEqual([job.id]);
+    expect(result.recovered.map(({ runId }) => runId)).toEqual([ids.main, ids.third]);
+    const finalRecovery = recoverInterruptedRuns({
+      projectRoot,
+      isProcessAlive: () => false,
+      processIdentity: identity,
+    });
+    expect(finalRecovery.recovered.map(({ runId }) => runId)).toEqual([ids.first]);
+    expect(
+      recoverInterruptedRuns({
+        projectRoot,
+        isProcessAlive: () => false,
+        processIdentity: identity,
+      }).recovered,
+    ).toEqual([]);
+  });
+
+  it("keeps legacy records and identity probe failures conservatively active", () => {
+    const projectRoot = root();
+    writeRecord(projectRoot, `${ids.first}.json`, runningRecord(ids.first));
+    writeRecord(
+      projectRoot,
+      `${ids.main}.json`,
+      runningRecord(ids.main, { runnerIdentity: identity(1234) }),
+    );
+
+    const result = recoverInterruptedRuns({
+      projectRoot,
+      isProcessAlive: () => true,
+      processIdentity: () => {
+        throw new Error("PRIVATE_RAW_COMMAND_SENTINEL");
+      },
+    });
+
+    expect(result).toEqual({
+      recovered: [],
+      activeTaskIds: [job.id],
+      invalidRecords: 0,
+    });
+    expect(JSON.stringify(result)).not.toContain("PRIVATE_RAW_COMMAND_SENTINEL");
+  });
+
+  it("rejects non-hash identities without persisting or exposing raw process data", () => {
+    const projectRoot = root();
+    expectSafeFailure(() =>
+      startRunRecordRaw({
+        projectRoot,
+        runId: ids.main,
+        job,
+        runnerPid: 1234,
+        startedAt: new Date("2026-07-19T01:00:00.000Z"),
+        processIdentity: () => "PRIVATE_RUN_STATE_SENTINEL",
+      }),
+    );
+    expect(readdirSync(projectRoot)).toEqual([]);
+  });
+
   it("counts unsafe and invalid records without following, rewriting, or exposing them", () => {
     const projectRoot = root();
     const outside = root();
@@ -307,6 +435,11 @@ describe("observer run-state journal", () => {
       "not-a-private-sentinel-uuid.json",
       runningRecord(ids.sixth),
     );
+    writeRecord(
+      projectRoot,
+      `${ids.seventh}.json`,
+      runningRecord(ids.seventh, { childIdentity: identity(5678) }),
+    );
 
     const result = recoverInterruptedRuns({
       projectRoot,
@@ -314,7 +447,7 @@ describe("observer run-state journal", () => {
       isProcessAlive: () => false,
     });
 
-    expect(result).toEqual({ recovered: [], activeTaskIds: [], invalidRecords: 6 });
+    expect(result).toEqual({ recovered: [], activeTaskIds: [], invalidRecords: 7 });
     expect(JSON.stringify(result)).not.toContain("PRIVATE_RUN_STATE_SENTINEL");
     expect(readFileSync(symlinkTarget, "utf8")).toContain("running");
     expect(statSync(runPath(projectRoot, ids.main)).mode & 0o777).toBe(0o640);

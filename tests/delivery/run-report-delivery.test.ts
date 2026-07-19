@@ -202,6 +202,36 @@ describe("run report delivery ledger", () => {
     expect(sendImage).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps the image attached when retrying explicitly rejected text", async () => {
+    const root = project();
+    const imagePath = join(root, "report.png");
+    const sendText = vi
+      .fn<(_: string) => Promise<{ status: "sent"; chunks: number }>>()
+      .mockRejectedValueOnce(new WechatDeliveryRejectedError())
+      .mockResolvedValueOnce({ status: "sent", chunks: 1 });
+    const sendImage = vi.fn(async () => ({ status: "sent" as const }));
+    const options = {
+      projectRoot: root,
+      report: report(),
+      imagePath,
+      sendText,
+      sendImage,
+      now: () => NOW,
+    };
+
+    await expect(deliverRunReport(options)).rejects.toBeInstanceOf(
+      WechatDeliveryRejectedError,
+    );
+    await expect(deliverRunReport(options)).resolves.toMatchObject({
+      image: "sent",
+      textAttempt: 2,
+      imageAttempt: 1,
+    });
+    expect(sendText).toHaveBeenCalledTimes(2);
+    expect(sendImage).toHaveBeenCalledOnce();
+    expect(sendImage).toHaveBeenCalledWith(imagePath);
+  });
+
   it("blocks a rejected image retry when its required image path disappears", async () => {
     const root = project();
     const sendText = vi.fn(async () => ({ status: "sent" as const, chunks: 1 }));
@@ -787,6 +817,7 @@ describe("run report delivery ledger", () => {
     const text = formatRunReportText(value);
 
     expect(text.split("\n")).toHaveLength(4);
+    expect(text.split("\n")[2]).toContain("运行：11111111");
     expect([...text].length).toBeLessThanOrEqual(1_800);
     expect(text).not.toContain("raw upstream error");
     expect(text).not.toContain("output/run-reports");
@@ -828,7 +859,7 @@ describe("run report delivery ledger", () => {
     expect(fallback.split("\n")).toEqual([
       "运行报告｜未命名项目",
       "任务：未命名任务",
-      "状态：成功｜耗时：60000 ms",
+      "状态：成功｜运行：11111111｜耗时：60000 ms",
       "摘要：今日任务已完成",
     ]);
   });
@@ -926,5 +957,84 @@ describe("run report delivery ledger", () => {
         reports: [rejected, loginExpired, retryLimit],
       }),
     ).toEqual({ pending: 3, indeterminate: 0, invalid: 0 });
+  });
+
+  it("inspects final reports and orphan ledgers exactly once in reports-aware mode", async () => {
+    const root = project();
+    const finalRetryable = report({ runId: "99999999-9999-4999-8999-999999999991" });
+    const missingFinal = report({ runId: "99999999-9999-4999-8999-999999999992" });
+    const orphanUncertain = report({ runId: "99999999-9999-4999-8999-999999999993" });
+    const orphanInvalid = report({ runId: "99999999-9999-4999-8999-999999999994" });
+    const image = async () => ({ status: "sent" as const });
+    await expect(
+      deliverRunReport({
+        projectRoot: root,
+        report: finalRetryable,
+        sendText: async () => { throw new WechatDeliveryRejectedError(); },
+        sendImage: image,
+        now: () => NOW,
+      }),
+    ).rejects.toBeInstanceOf(WechatDeliveryRejectedError);
+    await expect(
+      deliverRunReport({
+        projectRoot: root,
+        report: orphanUncertain,
+        sendText: async () => { throw new WechatDeliveryIndeterminateError(); },
+        sendImage: image,
+        now: () => NOW,
+      }),
+    ).rejects.toBeInstanceOf(WechatDeliveryIndeterminateError);
+    writeFileSync(
+      join(root, ".state", "delivery", "runs", `${orphanInvalid.runId}.json`),
+      "malformed",
+      { mode: 0o600 },
+    );
+
+    expect(
+      inspectRunDeliveryState({
+        projectRoot: root,
+        reports: [finalRetryable, finalRetryable, missingFinal],
+      }),
+    ).toEqual({ pending: 2, indeterminate: 1, invalid: 1 });
+  });
+
+  it("classifies a final report ledger hash mismatch as invalid", async () => {
+    const root = project();
+    const original = report({ runId: "99999999-9999-4999-8999-999999999995" });
+    await deliverRunReport({
+      projectRoot: root,
+      report: original,
+      sendText: async () => ({ status: "sent", chunks: 1 }),
+      sendImage: async () => ({ status: "sent" }),
+      now: () => NOW,
+    });
+
+    expect(
+      inspectRunDeliveryState({
+        projectRoot: root,
+        reports: [{ ...original, summary: ["不同但仍合法的最终报告"] }],
+      }),
+    ).toEqual({ pending: 0, indeterminate: 0, invalid: 1 });
+  });
+
+  it("deduplicates conflicting final reports by run id without counting their ledger twice", async () => {
+    const root = project();
+    const original = report({ runId: "99999999-9999-4999-8999-999999999997" });
+    await expect(
+      deliverRunReport({
+        projectRoot: root,
+        report: original,
+        sendText: async () => { throw new WechatDeliveryRejectedError(); },
+        sendImage: async () => ({ status: "sent" }),
+        now: () => NOW,
+      }),
+    ).rejects.toBeInstanceOf(WechatDeliveryRejectedError);
+
+    expect(
+      inspectRunDeliveryState({
+        projectRoot: root,
+        reports: [original, { ...original, summary: ["冲突报告"] }],
+      }),
+    ).toEqual({ pending: 0, indeterminate: 0, invalid: 1 });
   });
 });

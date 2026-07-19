@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  readProjectBytes,
   readProjectText,
   writeProjectBytesAtomic,
   writeProjectTextAtomic,
@@ -112,6 +113,34 @@ describe("project file persistence", () => {
     expect(readProjectText(project, path, 100)).toBeNull();
     writeProjectTextAtomic(project, path, "12345");
     expect(() => readProjectText(project, path, 4)).toThrow(/size limit/i);
+  });
+
+  it("reads bounded private regular bytes and rejects unsafe identity or permissions", () => {
+    const project = root();
+    const parent = join(project, "private");
+    const path = join(parent, "image.png");
+    const content = Buffer.from([1, 2, 3, 4]);
+    writeProjectBytesAtomic(project, path, content);
+
+    expect(readProjectBytes(project, path, 4)).toEqual(content);
+    expect(() => readProjectBytes(project, path, 3)).toThrow(/size limit/i);
+    chmodSync(path, 0o640);
+    expect(() => readProjectBytes(project, path, 4)).toThrow(/private regular file/i);
+  });
+
+  it("never follows a symlink while reading private project bytes", () => {
+    const project = root();
+    const outside = root();
+    const parent = join(project, "private");
+    const outsidePath = join(outside, "outside.bin");
+    mkdirSync(parent, { mode: 0o700 });
+    writeFileSync(outsidePath, Buffer.from("unchanged"), { mode: 0o600 });
+    symlinkSync(outsidePath, join(parent, "linked.bin"));
+
+    expect(() =>
+      readProjectBytes(project, join(parent, "linked.bin"), 100),
+    ).toThrow(/symlink|private regular file/i);
+    expect(readFileSync(outsidePath, "utf8")).toBe("unchanged");
   });
 
   it("rejects writes through a symlink and paths outside the project", () => {

@@ -11,6 +11,11 @@ import {
   type HealthProbes,
   type ProjectHealthReport,
 } from "../../src/app/health.js";
+import {
+  deliverRunReport,
+  inspectRunDeliveryState,
+} from "../../src/delivery/run-report-delivery.js";
+import type { RunReport } from "../../src/observer/run-report.js";
 import { runHealthCli } from "../../src/cli/health.js";
 import type { ObserverConfig } from "../../src/observer/config.js";
 import {
@@ -84,7 +89,6 @@ function healthyProbes(
       indeterminate: 0,
       invalid: 0,
     }),
-    runDeliveryDisposition: () => "sent",
     ...overrides,
   };
 }
@@ -361,7 +365,7 @@ describe("project health", () => {
           } as never,
         ],
         inspectRunDeliveryState: (options) => {
-          expect(options).not.toHaveProperty("reports");
+          expect(options).toHaveProperty("reports");
           return { pending: 3, indeterminate: 4, invalid: 0 };
         },
       }),
@@ -389,7 +393,7 @@ describe("project health", () => {
     expect(healthExitCode(report)).toBe(0);
   });
 
-  it("scans orphan ledgers and adds only missing final-report deliveries", () => {
+  it("uses one reports-aware delivery inspection without separate disposition probes", () => {
     const root = project();
     const missingRunId = "018f514c-1a2b-7abc-8def-1234567890ac";
     const retryableRunId = "018f514c-1a2b-7abc-8def-1234567890ad";
@@ -397,19 +401,10 @@ describe("project health", () => {
     const reports = [missingRunId, retryableRunId, indeterminateRunId].map(
       (runId) => ({ runId }) as never,
     );
-    const inspectRunDeliveryState = vi.fn((options: { reports?: unknown }) => {
-      expect(options).not.toHaveProperty("reports");
-      // All ledgers: one orphan and one final retryable, one orphan and one
-      // final indeterminate, plus one orphan invalid ledger.
-      return { pending: 2, indeterminate: 2, invalid: 1 };
+    const inspectDelivery = vi.fn((options: { reports?: readonly { runId: string }[] }) => {
+      expect(options.reports).toEqual(reports);
+      return { pending: 3, indeterminate: 2, invalid: 1 };
     });
-    const runDeliveryDisposition = vi.fn(({ report }: { report: { runId: string } }) =>
-      report.runId === missingRunId
-        ? "missing" as const
-        : report.runId === retryableRunId
-          ? "retryable" as const
-          : "indeterminate" as const,
-    );
 
     const report = inspectProjectHealth({
       projectRoot: root,
@@ -420,13 +415,11 @@ describe("project health", () => {
           contextReady: true,
         }),
         listFinalRunReports: () => reports,
-        inspectRunDeliveryState,
-        runDeliveryDisposition,
+        inspectRunDeliveryState: inspectDelivery,
       }),
     });
 
-    expect(inspectRunDeliveryState).toHaveBeenCalledOnce();
-    expect(runDeliveryDisposition).toHaveBeenCalledTimes(3);
+    expect(inspectDelivery).toHaveBeenCalledOnce();
     expect(report.observer).toMatchObject({
       pendingDeliveries: 3,
       indeterminateDeliveries: 2,
@@ -435,6 +428,49 @@ describe("project health", () => {
     expect(JSON.stringify(report)).not.toContain(missingRunId);
     expect(JSON.stringify(report)).not.toContain(retryableRunId);
     expect(JSON.stringify(report)).not.toContain(indeterminateRunId);
+  });
+
+  it("fails health for a real final-report ledger hash mismatch", async () => {
+    const root = project();
+    const original: RunReport = {
+      version: 1,
+      runId: "99999999-9999-4999-8999-999999999996",
+      taskId: "daily-tech-digest",
+      taskName: "每日科技情报",
+      projectLabel: "WeChatPilot",
+      status: "success",
+      startedAt: "2026-07-20T00:00:00.000Z",
+      finishedAt: "2026-07-20T00:00:01.000Z",
+      durationMs: 1_000,
+      summary: ["原报告"],
+      metrics: [],
+      failure: null,
+      artifacts: [],
+    };
+    await deliverRunReport({
+      projectRoot: root,
+      report: original,
+      sendText: async () => ({ status: "sent", chunks: 1 }),
+      sendImage: async () => ({ status: "sent" }),
+    });
+    const changed = { ...original, summary: ["不同的最终报告"] };
+
+    const result = inspectProjectHealth({
+      projectRoot: root,
+      probes: healthyProbes({
+        wechatHealth: () => ({
+          credentialsReady: true,
+          ownerBound: true,
+          contextReady: true,
+        }),
+        listFinalRunReports: () => [changed],
+        inspectRunDeliveryState,
+      }),
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.observer.invalidStateRecords).toBeGreaterThan(0);
+    expect(result.diagnostics).toContain("observer state check failed");
   });
 
   it.each([

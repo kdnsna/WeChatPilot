@@ -511,18 +511,55 @@ describe("renderReportCard", () => {
     expect(statSync(paths.pngPath).isDirectory()).toBe(true);
   });
 
-  it("uses one-time artifact paths without replacing a completed pair", () => {
+  it("reuses an exact completed artifact pair without rewriting either file", () => {
     const root = projectRoot();
     const value = report();
     const artifact = renderReportCard({ projectRoot: root, report: value });
     const pngBefore = readFileSync(artifact.pngPath);
     const jsonBefore = readFileSync(artifact.jsonPath);
 
+    const pngModifiedAt = statSync(artifact.pngPath).mtimeMs;
+    const jsonModifiedAt = statSync(artifact.jsonPath).mtimeMs;
+    const reused = renderReportCard({ projectRoot: root, report: value });
+
+    expect(reused).toEqual(artifact);
+    expect(readFileSync(artifact.pngPath)).toEqual(pngBefore);
+    expect(readFileSync(artifact.jsonPath)).toEqual(jsonBefore);
+    expect(statSync(artifact.pngPath).mtimeMs).toBe(pngModifiedAt);
+    expect(statSync(artifact.jsonPath).mtimeMs).toBe(jsonModifiedAt);
+  });
+
+  it.each(["json", "png"] as const)(
+    "rejects a tampered completed pair when the %s bytes no longer match",
+    (target) => {
+      const root = projectRoot();
+      const value = report();
+      const artifact = renderReportCard({ projectRoot: root, report: value });
+      const path = target === "json" ? artifact.jsonPath : artifact.pngPath;
+      writeFileSync(path, target === "json" ? "{}\n" : Buffer.from("not-a-png"));
+      const pngBefore = readFileSync(artifact.pngPath);
+      const jsonBefore = readFileSync(artifact.jsonPath);
+
+      expect(() => renderReportCard({ projectRoot: root, report: value })).toThrow(
+        /^Unable to render report card$/,
+      );
+      expect(readFileSync(artifact.pngPath)).toEqual(pngBefore);
+      expect(readFileSync(artifact.jsonPath)).toEqual(jsonBefore);
+    },
+  );
+
+  it("rejects a completed artifact when its matching JSON file is missing", () => {
+    const root = projectRoot();
+    const value = report();
+    const artifact = renderReportCard({ projectRoot: root, report: value });
+    rmSync(artifact.jsonPath);
+    const pngBefore = readFileSync(artifact.pngPath);
+
     expect(() => renderReportCard({ projectRoot: root, report: value })).toThrow(
       /^Unable to render report card$/,
     );
     expect(readFileSync(artifact.pngPath)).toEqual(pngBefore);
-    expect(readFileSync(artifact.jsonPath)).toEqual(jsonBefore);
+    expect(existsSync(artifact.jsonPath)).toBe(false);
   });
 
   it("writes JSON before PNG and removes only that new JSON if PNG writing fails", () => {

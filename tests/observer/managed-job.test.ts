@@ -233,6 +233,26 @@ describe("runManagedJob", () => {
     expect(deps.startRunRecord).toHaveBeenCalledOnce();
   });
 
+  it("fails safely and terminates the child when child identity persistence fails", async () => {
+    const root = project();
+    const child = new FakeChild();
+    const privateMarker = "PRIVATE_RAW_PROCESS_COMMAND";
+    const deps = dependencies(vi.fn(() => child), {
+      updateRunChildPid: vi.fn(() => { throw new Error(privateMarker); }),
+    });
+    const promise = runManagedJob({ projectRoot: root, job, dependencies: deps });
+    await Promise.resolve();
+    await Promise.resolve();
+    child.emit("spawn");
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    child.emit("exit", null, "SIGTERM");
+
+    const outcome = await promise;
+    expect(outcome.authority.status).toBe("failed");
+    expect(outcome.draft?.failure).toBe("受管任务进程发生错误");
+    expect(JSON.stringify(outcome)).not.toContain(privateMarker);
+  });
+
   it("uses fixed failures for spawn errors and non-zero exits", async () => {
     const root = project();
     const spawnErrorChild = new FakeChild();

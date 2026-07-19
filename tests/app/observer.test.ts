@@ -8,6 +8,11 @@ import {
   runObserverJob,
   type ObserverDependencies,
 } from "../../src/app/observer.js";
+import {
+  deliverRunReport,
+  runDeliveryDisposition,
+} from "../../src/delivery/run-report-delivery.js";
+import { WechatDeliveryRejectedError } from "../../src/delivery/wechat.js";
 import type { ObserverConfig, ObserverJob } from "../../src/observer/config.js";
 import { ObserverTaskBusyError } from "../../src/observer/task-lock.js";
 import type {
@@ -20,11 +25,16 @@ import {
   startRunRecord,
   updateRunChildPid,
 } from "../../src/observer/run-state.js";
+import { renderReportCard } from "../../src/observer/report-card.js";
 
 const ROOT = "/private/tmp/wechat-observer-test";
 const RECOVERED_ID = "018f514c-1a2b-7abc-8def-1234567890ab";
 const CURRENT_ID = "018f514c-1a2b-7abc-8def-1234567890ac";
 const roots: string[] = [];
+
+function processIdentity(pid: number): string {
+  return pid.toString(16).padStart(64, "0");
+}
 
 function projectRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "wechat-observer-app-"));
@@ -317,17 +327,20 @@ describe("observer orchestration", () => {
       job,
       runnerPid: 700_001,
       startedAt: new Date("2026-07-20T00:00:00.000Z"),
+      processIdentity,
     });
     updateRunChildPid({
       projectRoot: root,
       runId: RECOVERED_ID,
       childPid: 700_002,
+      processIdentity,
     });
     const deps = dependencies({
       recover: vi.fn((options) =>
         recoverInterruptedRuns({
           ...options,
           isProcessAlive: (pid) => pid === 700_002,
+          processIdentity,
         }),
       ),
     });
@@ -363,6 +376,56 @@ describe("observer orchestration", () => {
     );
   });
 
+  it("reuses the real card after an image rejection and reconciles without resending text", async () => {
+    const root = projectRoot();
+    const value = report(CURRENT_ID);
+    const sendText = vi.fn(async () => ({ status: "sent" as const, chunks: 1 }));
+    const sendImage = vi
+      .fn<(_: string) => Promise<{ status: "sent" }>>()
+      .mockRejectedValueOnce(new WechatDeliveryRejectedError())
+      .mockResolvedValueOnce({ status: "sent" });
+    const shared = {
+      loadConfig: vi.fn(() => config),
+      render: renderReportCard,
+      prepareText: vi.fn(async () => sendText),
+      prepareImage: vi.fn(async () => sendImage),
+      deliver: deliverRunReport,
+      deliveryDisposition: runDeliveryDisposition,
+    };
+
+    await expect(
+      runObserverJob({
+        projectRoot: root,
+        jobId: job.id,
+        dependencies: dependencies({
+          ...shared,
+          runJob: vi.fn(async () => ({ authority: authority(CURRENT_ID), draft: null })),
+          normalize: vi.fn(() => value),
+        }),
+      }),
+    ).rejects.toBeInstanceOf(WechatDeliveryRejectedError);
+
+    await expect(
+      runObserverJob({
+        projectRoot: root,
+        jobId: job.id,
+        dependencies: dependencies({
+          ...shared,
+          recover: vi.fn(() => ({
+            recovered: [],
+            activeTaskIds: [job.id],
+            invalidRecords: 0,
+          })),
+          listFinalReports: vi.fn(() => [value]),
+        }),
+      }),
+    ).rejects.toBeInstanceOf(ObserverTaskBusyError);
+
+    expect(sendText).toHaveBeenCalledOnce();
+    expect(sendImage).toHaveBeenCalledTimes(2);
+    expect(runDeliveryDisposition({ projectRoot: root, report: value })).toBe("sent");
+  });
+
   it("normalizes an invalid draft to the minimal report", async () => {
     const withNormalizer = dependencies({
       runJob: vi.fn(async () => ({
@@ -393,6 +456,7 @@ describe("observer orchestration", () => {
           job,
           runnerPid: process.pid,
           startedAt: new Date("2026-07-20T00:00:00.000Z"),
+          processIdentity,
         });
         return { authority: authority(CURRENT_ID), draft: null };
       }),

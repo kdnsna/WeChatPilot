@@ -477,7 +477,7 @@ export function formatRunReportText(report: RunReport): string {
   const prefix = [
     `运行报告｜${projectLabel}`,
     `任务：${taskName}`,
-    `状态：${status}｜耗时：${parsed.durationMs} ms`,
+    `状态：${status}｜运行：${parsed.runId.slice(0, 8)}｜耗时：${parsed.durationMs} ms`,
   ];
   const used = [...prefix.join("\n")].length + 1;
   const summary = truncate(
@@ -974,32 +974,30 @@ export function inspectRunDeliveryState(options: {
   let pending = 0;
   let indeterminate = 0;
   let invalid = 0;
-  if (options.reports !== undefined) {
-    for (const candidate of options.reports) {
-      const parsed = RunReportSchema.safeParse(candidate);
-      if (!parsed.success) {
-        invalid += 1;
-        continue;
-      }
-      const current = readLedger(
-        options.projectRoot,
-        parsed.data.runId,
-        runReportSha256(parsed.data),
-      );
-      if (current.kind === "invalid") {
-        invalid += 1;
-      } else if (current.kind === "missing") {
-        pending += 1;
-      } else if (current.ledger !== undefined) {
-        const state = disposition(current.ledger);
-        if (state === "retryable" || state === "blocked") {
-          pending += 1;
-        } else if (state === "indeterminate") {
-          indeterminate += 1;
-        }
-      }
+  const finalReports = new Map<string, RunReport>();
+  const finalRunIds = new Set<string>();
+  const conflictingRunIds = new Set<string>();
+  for (const candidate of options.reports ?? []) {
+    const parsed = RunReportSchema.safeParse(candidate);
+    if (!parsed.success) {
+      invalid += 1;
+      continue;
     }
-    return { pending, indeterminate, invalid };
+    finalRunIds.add(parsed.data.runId);
+    if (conflictingRunIds.has(parsed.data.runId)) {
+      continue;
+    }
+    const previous = finalReports.get(parsed.data.runId);
+    if (
+      previous !== undefined &&
+      runReportSha256(previous) !== runReportSha256(parsed.data)
+    ) {
+      invalid += 1;
+      finalReports.delete(parsed.data.runId);
+      conflictingRunIds.add(parsed.data.runId);
+      continue;
+    }
+    finalReports.set(parsed.data.runId, parsed.data);
   }
 
   let entries: string[];
@@ -1007,19 +1005,47 @@ export function inspectRunDeliveryState(options: {
     const directory = deliveryRunsDirectory(options.projectRoot);
     const stat = lstatSync(assertNoSymlinkComponents(options.projectRoot, directory));
     if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) {
-      return { pending: 0, indeterminate: 0, invalid: 1 };
+      return { pending, indeterminate, invalid: invalid + 1 };
     }
     entries = readdirSync(directory);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { pending: 0, indeterminate: 0, invalid: 0 };
+      return {
+        pending: pending + finalReports.size,
+        indeterminate,
+        invalid,
+      };
     }
-    return { pending: 0, indeterminate: 0, invalid: 1 };
+    return { pending, indeterminate, invalid: invalid + 1 };
   }
+
+  for (const final of finalReports.values()) {
+    const current = readLedger(
+      options.projectRoot,
+      final.runId,
+      runReportSha256(final),
+    );
+    if (current.kind === "invalid") {
+      invalid += 1;
+    } else if (current.kind === "missing") {
+      pending += 1;
+    } else if (current.ledger !== undefined) {
+      const state = disposition(current.ledger);
+      if (state === "retryable" || state === "blocked") {
+        pending += 1;
+      } else if (state === "indeterminate") {
+        indeterminate += 1;
+      }
+    }
+  }
+
   for (const entry of entries) {
     const match = /^([0-9a-f-]{36})\.json$/u.exec(entry);
     if (match?.[1] === undefined || !RunIdSchema.safeParse(match[1]).success) {
       invalid += 1;
+      continue;
+    }
+    if (finalRunIds.has(match[1])) {
       continue;
     }
     const current = readLedger(options.projectRoot, match[1]);
