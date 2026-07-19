@@ -20,19 +20,69 @@ export interface SanitizeReportTextOptions {
 
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
 const BIDI_CONTROL_CHARACTERS = /[\u202a-\u202e\u2066-\u2069]/gu;
-const DOUBLE_QUOTED_HOME_PATH =
-  /"\/(?:Users|home)\/[^\r\n]+?"(?=[^\u0000-\u007f]|[.!?,;:)\]}]|\s|$)/gu;
-const SINGLE_QUOTED_HOME_PATH =
-  /'\/(?:Users|home)\/[^\r\n]+?'(?=[^\u0000-\u007f]|[.!?,;:)\]}]|\s|$)/gu;
 const UNQUOTED_HOME_PATH =
   /\/(?:Users|home)\/[^\r\n<>]+?(?=\s+\/(?:Users|home)\/|[。！？；，]|[.!?,;:](?=\s|$)|[\])}](?=\s|$)|$)/gu;
 const URL_TEXT = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/giu;
 
-function redactHomePaths(value: string): string {
+interface QuotedHomeOpening {
+  readonly index: number;
+  readonly quote: "'" | '"';
+}
+
+function findQuotedHomeOpening(
+  line: string,
+  startIndex: number,
+): QuotedHomeOpening | null {
+  for (let index = startIndex; index < line.length; index += 1) {
+    const quote = line[index];
+    if (quote !== "'" && quote !== '"') {
+      continue;
+    }
+    if (
+      line.startsWith("/Users/", index + 1) ||
+      line.startsWith("/home/", index + 1)
+    ) {
+      return { index, quote };
+    }
+  }
+  return null;
+}
+
+function redactQuotedHomePathsInLine(line: string): string {
+  let cursor = 0;
+  let result = "";
+  while (cursor < line.length) {
+    const opening = findQuotedHomeOpening(line, cursor);
+    if (opening === null) {
+      return result + line.slice(cursor);
+    }
+    result += line.slice(cursor, opening.index);
+
+    // POSIX names can contain unescaped quotes. Taking the line's last matching
+    // quote fails closed: ambiguous text may be over-redacted, but no path tail leaks.
+    const closingIndex = line.lastIndexOf(opening.quote);
+    if (closingIndex <= opening.index) {
+      return result + line.slice(opening.index);
+    }
+
+    result += `${opening.quote}[LOCAL_PATH]${opening.quote}`;
+    cursor = closingIndex + 1;
+  }
+  return result;
+}
+
+function redactQuotedHomePaths(value: string): string {
   return value
-    .replace(DOUBLE_QUOTED_HOME_PATH, '"[LOCAL_PATH]"')
-    .replace(SINGLE_QUOTED_HOME_PATH, "'[LOCAL_PATH]'")
-    .replace(UNQUOTED_HOME_PATH, "[LOCAL_PATH]");
+    .split(/(\r\n|\r|\n)/u)
+    .map((line) => redactQuotedHomePathsInLine(line))
+    .join("");
+}
+
+function redactHomePaths(value: string): string {
+  return redactQuotedHomePaths(value).replace(
+    UNQUOTED_HOME_PATH,
+    "[LOCAL_PATH]",
+  );
 }
 
 export function sanitizeReportText(
