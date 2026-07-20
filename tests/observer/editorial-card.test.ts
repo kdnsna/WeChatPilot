@@ -156,6 +156,23 @@ describe("fixed editorial card SVG", () => {
     }
   });
 
+  it("labels status receipts as operational evidence instead of digest sources", () => {
+    const svg = buildEditorialCardSvg({
+      report: report("skipped", 0),
+      heroPng: hero(),
+      visualMode: "generated",
+    });
+
+    expect(svg).toContain("证据 1 · 置信度 高 · 中影响");
+    expect(svg).toContain("审计证据 5");
+    expect(svg).toContain("确认项 5");
+    expect(svg).toContain("检查域 4");
+    expect(svg).toContain("状态回执：已生成");
+    expect(svg).toContain("01 识别  →  02 取证  →  03 审计  →  04 回执合成");
+    expect(svg).not.toContain("日报正文：本次未确认");
+    expect(svg).not.toContain("来源 1 ·");
+  });
+
   it("allows one trusted embedded hero and neutralizes report-controlled resources", () => {
     const base = report();
     const hostile = {

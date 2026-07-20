@@ -125,6 +125,7 @@ export function buildEditorialCardSvg(options: {
   const finished = shanghaiParts(report.finishedAt);
   const issueLabel = report.issueLabel ?? "WP-UNASSIGNED";
   const editorial = report.editorial;
+  const isStatusReceipt = editorial?.kind === "status";
   const highlights = (editorial?.highlights ?? []).slice(0, 5);
   const actions = (editorial?.actions ?? []).slice(0, 3);
   const audit = editorial?.audit;
@@ -212,7 +213,7 @@ export function buildEditorialCardSvg(options: {
           top + itemHeight - 24,
           18,
           600,
-          `来源 ${highlight.sourceCount} · 置信度 ${CONFIDENCE[highlight.confidence]} · ${IMPACT[highlight.impact]}`,
+          `${isStatusReceipt ? "证据" : "来源"} ${highlight.sourceCount} · 置信度 ${CONFIDENCE[highlight.confidence]} · ${IMPACT[highlight.impact]}`,
           MUTED,
         ),
       );
@@ -259,13 +260,13 @@ export function buildEditorialCardSvg(options: {
   nodes.push(
     textNode(48, 2140, 20, 700, "CODEX AUDIT / 执行与交付审计", NAVY),
     `<line x1="48" y1="2162" x2="1032" y2="2162" stroke="#cfc7b8" stroke-width="2"/>`,
-    textNode(48, 2204, 18, 600, `候选 ${auditNumber(audit?.candidateCount)}`, MUTED),
-    textNode(218, 2204, 18, 600, `入选 ${auditNumber(selectedCount)}`, MUTED),
-    textNode(388, 2204, 18, 600, `来源覆盖 ${auditNumber(audit?.sourceCategoryCount)}`, MUTED),
+    textNode(48, 2204, 18, 600, `${isStatusReceipt ? "审计证据" : "候选"} ${auditNumber(audit?.candidateCount)}`, MUTED),
+    textNode(218, 2204, 18, 600, `${isStatusReceipt ? "确认项" : "入选"} ${auditNumber(selectedCount)}`, MUTED),
+    textNode(388, 2204, 18, 600, `${isStatusReceipt ? "检查域" : "来源覆盖"} ${auditNumber(audit?.sourceCategoryCount)}`, MUTED),
     textNode(620, 2204, 18, 600, `耗时 ${report.durationMs} ms`, MUTED),
-    textNode(48, 2244, 18, 700, bodyConfirmed(report) ? "日报正文：确认成功" : "日报正文：本次未确认", bodyConfirmed(report) ? "#2f6f55" : MUTED),
+    textNode(48, 2244, 18, 700, isStatusReceipt ? "状态回执：已生成" : bodyConfirmed(report) ? "日报正文：确认成功" : "日报正文：本次未确认", isStatusReceipt || bodyConfirmed(report) ? "#2f6f55" : MUTED),
     textNode(360, 2244, 18, 700, options.visualMode === "generated" ? "报告图：已生成" : "报告图：固定背景", options.visualMode === "generated" ? "#2f6f55" : ORANGE),
-    textNode(48, 2288, 17, 600, "01 收集  →  02 核验  →  03 编排  →  04 图像合成", INK),
+    textNode(48, 2288, 17, 600, isStatusReceipt ? "01 识别  →  02 取证  →  03 审计  →  04 回执合成" : "01 收集  →  02 核验  →  03 编排  →  04 图像合成", INK),
     `<line x1="48" y1="2320" x2="1032" y2="2320" stroke="#cfc7b8" stroke-width="1"/>`,
     textNode(48, 2362, 17, 600, `RUN ${report.runId.slice(0, 8).toUpperCase()} · ${escapeText(options.visualMode.toUpperCase())} · EDITORIAL-V1`, MUTED),
     textNode(908, 2362, 17, 700, "PAGE 01 / 01", NAVY),

@@ -441,8 +441,10 @@ describe("buildRunReport", () => {
     });
     expect(fallback.editorial).toMatchObject({
       kind: "status",
-      highlights: [],
-      actions: [],
+      highlights: Array.from({ length: 5 }, () =>
+        expect.objectContaining({ confidence: "high", impact: "medium" }),
+      ),
+      actions: Array.from({ length: 3 }, () => expect.any(String)),
       audit: { scheduledDate: "2026-07-19" },
     });
     expect(JSON.stringify(fallback)).not.toContain("secret.test");

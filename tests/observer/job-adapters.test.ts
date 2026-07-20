@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { parseScheduledDigestResult } from "../../src/observer/job-adapters.js";
+import { EditorialReportPayloadSchema } from "../../src/report/editorial.js";
 import { validEditorialPayload } from "../helpers/editorial.js";
 
 const editorial = validEditorialPayload();
@@ -45,25 +46,42 @@ describe("parseScheduledDigestResult", () => {
       statusOverride: "skipped",
       draft: {
         summary: ["尚未到每日发送时间，本次跳过"],
-        editorial: { kind: "status", highlights: [], actions: [] },
+        editorial: {
+          kind: "status",
+          highlights: expect.any(Array),
+          actions: expect.any(Array),
+        },
       },
     });
-    expect(
-      parseScheduledDigestResult(
-        JSON.stringify({
-          ok: true,
-          status: "already-sent",
-          date: "2026-07-20",
-          jobAttempt: 2,
-        }),
-      ),
-    ).toMatchObject({
+    const notDueEditorial = EditorialReportPayloadSchema.parse(
+      notDue.draft.editorial,
+    );
+    expect(notDueEditorial.highlights).toHaveLength(5);
+    expect(notDueEditorial.actions).toHaveLength(3);
+    const alreadySent = parseScheduledDigestResult(
+      JSON.stringify({
+        ok: true,
+        status: "already-sent",
+        date: "2026-07-20",
+        jobAttempt: 2,
+      }),
+    );
+    expect(alreadySent).toMatchObject({
       statusOverride: "skipped",
       draft: {
         summary: ["今日日报已发送，本次跳过"],
-        editorial: { kind: "status", highlights: [], actions: [] },
+        editorial: {
+          kind: "status",
+          highlights: expect.any(Array),
+          actions: expect.any(Array),
+        },
       },
     });
+    const alreadySentEditorial = EditorialReportPayloadSchema.parse(
+      alreadySent.draft.editorial,
+    );
+    expect(alreadySentEditorial.highlights).toHaveLength(5);
+    expect(alreadySentEditorial.actions).toHaveLength(3);
   });
 
   it.each([

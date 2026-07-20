@@ -330,8 +330,13 @@ describe("observer orchestration", () => {
             artifacts: [],
             editorial: {
               kind: "status",
-              highlights: [],
-              actions: [],
+              highlights: Array.from({ length: 5 }, () =>
+                expect.objectContaining({
+                  confidence: "high",
+                  impact: "medium",
+                }),
+              ),
+              actions: Array.from({ length: 3 }, () => expect.any(String)),
               audit: { scheduledDate: "2026-07-20" },
             },
           });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildStatusEditorialReport,
   DigestEditorialSchema,
   EditorialReportPayloadSchema,
   toEditorialReportPayload,
@@ -30,6 +31,38 @@ function validEditorial() {
 }
 
 describe("editorial report payload", () => {
+  it.each([
+    "not-due",
+    "already-sent",
+    "failed",
+    "interrupted",
+  ] as const)("builds a detailed, evidence-only %s status receipt", (reason) => {
+    const receipt = buildStatusEditorialReport({
+      reason,
+      date: "2026-07-20",
+    });
+
+    expect(receipt.kind).toBe("status");
+    expect(receipt.highlights).toHaveLength(5);
+    expect(receipt.actions).toHaveLength(3);
+    expect(receipt.audit).toEqual({
+      candidateCount: 5,
+      selectedCount: 5,
+      sourceCategoryCount: 4,
+      scheduledDate: "2026-07-20",
+    });
+    expect(
+      receipt.highlights.every(
+        (item) =>
+          item.sourceCount >= 1 &&
+          item.confidence === "high" &&
+          item.impact === "medium",
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(receipt)).not.toMatch(/https?:|token|cookie/iu);
+    expect(EditorialReportPayloadSchema.parse(receipt)).toEqual(receipt);
+  });
+
   it("converts verified source URLs into counts and deterministic confidence", () => {
     const safe = toEditorialReportPayload(validEditorial(), {
       allowedUrls: ["https://one.test/a", "https://two.test/b"],
