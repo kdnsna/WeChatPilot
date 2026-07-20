@@ -149,6 +149,7 @@ describe("fixed editorial card SVG", () => {
     expect(svg).toContain(marker);
     expect(svg).toContain("AI 主视觉暂不可用");
     expect(svg).toContain("报告图：固定背景");
+    expect(svg).not.toContain("FIXED VISUAL");
     if (status !== "success") {
       expect(svg).not.toContain("日报正文：确认成功");
       expect(svg).not.toContain("技术信号 1");

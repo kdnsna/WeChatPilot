@@ -145,7 +145,9 @@ export function buildEditorialCardSvg(options: {
     textNode(64, 292, 62, 700, "编辑部情报", "#ffffff"),
     textNode(66, 336, 24, 500, singleLine(report.taskName, 24, 66, 760), "#eef2f7"),
     textNode(64, 420, 20, 500, `${finished.date} · ${finished.time} CST`, "#ffffff"),
-    textNode(768, 420, 18, 600, options.visualMode === "generated" ? "AI VISUAL" : "FIXED VISUAL", "#ffffff"),
+    ...(options.visualMode === "generated"
+      ? [textNode(768, 420, 18, 600, "AI VISUAL", "#ffffff")]
+      : []),
   );
   if (options.visualMode === "fallback") {
     nodes.push(
