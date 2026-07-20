@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isValidPng } from "../../src/lib/png.js";
+import { isValidPng, pngDimensions } from "../../src/lib/png.js";
 
 function crc32(bytes: Uint8Array): number {
   let crc = 0xffff_ffff;
@@ -47,6 +47,10 @@ const constraints = {
 } as const;
 
 describe("structural PNG validation", () => {
+  it("returns dimensions only after validating the complete PNG structure", () => {
+    expect(pngDimensions(reportPng())).toEqual({ width: 1_080, height: 1_440 });
+  });
+
   it("accepts bounded chunks with valid CRCs, IDAT, and terminal empty IEND", () => {
     expect(isValidPng(reportPng(), constraints)).toBe(true);
   });
@@ -70,5 +74,17 @@ describe("structural PNG validation", () => {
     ],
   ])("rejects %s", (_case, invalid) => {
     expect(isValidPng(invalid(), constraints)).toBe(false);
+    expect(pngDimensions(invalid())).toBeNull();
+  });
+
+  it("rejects a duplicate IHDR even when both chunks have valid CRCs", () => {
+    const png = reportPng();
+    const duplicate = Buffer.concat([
+      png.subarray(0, 33),
+      png.subarray(8, 33),
+      png.subarray(33),
+    ]);
+
+    expect(pngDimensions(duplicate)).toBeNull();
   });
 });
