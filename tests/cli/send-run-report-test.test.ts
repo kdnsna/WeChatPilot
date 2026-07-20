@@ -73,6 +73,71 @@ afterEach(() => {
 });
 
 describe("fixed run-report test checkpoint", () => {
+  it("builds five editorial signals, assigns a real issue, and uses the production visual path", async () => {
+    const root = project();
+    const calls: string[] = [];
+    const issue = { number: 21, label: "WP-000021" };
+    const deliver = vi.fn(async ({ report, imagePath }) => {
+      calls.push("deliver");
+      expect(report.issueLabel).toBe(issue.label);
+      expect(report.editorial?.highlights).toHaveLength(5);
+      expect(report.editorial?.actions).toHaveLength(3);
+      expect(imagePath).toBe(
+        join(root, "output", "run-reports", "2026-07-20", `${FIRST_ID}.png`),
+      );
+      return {
+        status: "sent" as const,
+        textChunks: 1,
+        image: "sent" as const,
+        textAttempt: 1,
+        imageAttempt: 1,
+      };
+    });
+
+    await expect(
+      sendFixedRunReportTest({
+        projectRoot: root,
+        dependencies: {
+          now: () => NOW,
+          createRunId: () => FIRST_ID,
+          assignIssue: vi.fn(async () => {
+            calls.push("assign");
+            return issue;
+          }),
+          loadEditorial: vi.fn(() => {
+            calls.push("config");
+            return { mode: "editorial" } as never;
+          }),
+          prepareVisual: vi.fn(async ({ report }) => {
+            calls.push("visual");
+            expect(report.issueLabel).toBe(issue.label);
+            return {
+              mode: "generated" as const,
+              attempts: 1,
+              heroPath: join(root, "output", "preview.hero.png"),
+              heroSha256: "a".repeat(64),
+              styleVersion: "editorial-v1" as const,
+              promptSha256: "b".repeat(64),
+            };
+          }),
+          renderEditorial: vi.fn(({ report }) => {
+            calls.push("render");
+            return {
+              ...artifact(root, report),
+              issueLabel: report.issueLabel!,
+              visualMode: "generated" as const,
+            };
+          }),
+          prepareText: async () => async () => ({ status: "sent", chunks: 1 }),
+          prepareImage: async () => async () => ({ status: "sent" }),
+          deliver,
+        },
+      }),
+    ).resolves.toMatchObject({ status: "sent", image: "sent" });
+
+    expect(calls).toEqual(["assign", "config", "visual", "render", "deliver"]);
+  });
+
   it("rejects a concurrent first invocation before duplicate delivery", async () => {
     const root = project();
     let startFirst!: () => void;

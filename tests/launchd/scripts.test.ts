@@ -7,6 +7,20 @@ import { runSendRunReportTestCli } from "../../src/cli/send-run-report-test.js";
 const projectRoot = resolve(process.cwd());
 
 describe("LaunchAgent lifecycle scripts", () => {
+  it("provides fixed package commands for capability, preview, and owner-bound live testing", () => {
+    const packageJson = JSON.parse(
+      readFileSync(resolve(projectRoot, "package.json"), "utf8"),
+    ) as { scripts: Record<string, string> };
+    expect(packageJson.scripts).toMatchObject({
+      "report:image-probe":
+        'tsx src/cli/probe-report-image.ts --project-root "/Users/kdnsna/Documents/微信 chat"',
+      "report:preview":
+        'tsx src/cli/render-run-report-preview.ts --project-root "/Users/kdnsna/Documents/微信 chat"',
+      "report:test":
+        'tsx src/cli/send-run-report-test.ts --project-root "/Users/kdnsna/Documents/微信 chat"',
+    });
+  });
+
   it("delays native report renderer loading until guarded runtime probes", () => {
     const health = readFileSync(resolve(projectRoot, "src", "app", "health.ts"), "utf8");
     const testCard = readFileSync(
@@ -19,7 +33,14 @@ describe("LaunchAgent lifecycle scripts", () => {
     expect(testCard).not.toMatch(
       /import\s+\{[^}]*renderReportCard[^}]*\}\s+from\s+"\.\.\/observer\/report-card\.js"/u,
     );
-    expect(testCard).toContain('await import("../observer/report-card.js")');
+    expect(testCard).not.toMatch(
+      /import\s+\{[^}]*renderEditorialReportCard[^}]*\}\s+from\s+"\.\.\/observer\/editorial-card\.js"/u,
+    );
+    expect(testCard).not.toMatch(
+      /import\s+\{[^}]*prepareReportVisual[^}]*\}\s+from\s+"\.\.\/observer\/report-visual\.js"/u,
+    );
+    expect(testCard).toContain('await import("../observer/report-visual.js")');
+    expect(testCard).toContain('await import("../observer/editorial-card.js")');
   });
 
   it("sanitizes a delayed renderer loading failure", async () => {

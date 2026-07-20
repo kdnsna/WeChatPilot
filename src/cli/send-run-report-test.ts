@@ -31,11 +31,21 @@ import {
 } from "../delivery/wechat.js";
 import type { ReportCardArtifact } from "../observer/report-card.js";
 import {
-  buildRunReport,
   ProjectRelativeArtifactPathSchema,
   RunReportSchema,
   type RunReport,
 } from "../observer/run-report.js";
+import type { EditorialCardArtifact } from "../observer/editorial-card.js";
+import {
+  loadEditorialConfig,
+  type EditorialConfig,
+} from "../observer/editorial-config.js";
+import { buildFixedEditorialReport } from "../observer/fixed-editorial-report.js";
+import type { PreparedReportVisual } from "../observer/report-visual.js";
+import {
+  assignReportIssue,
+  type ReportIssue,
+} from "../observer/report-sequence.js";
 import { writeProjectTextAtomic } from "../lib/project-file.js";
 import {
   assertNoSymlinkComponents,
@@ -77,6 +87,22 @@ type TestCardCheckpoint = z.infer<typeof TestCardCheckpointSchema>;
 export interface SendRunReportTestDependencies {
   readonly now?: () => Date;
   readonly createRunId?: () => string;
+  readonly assignIssue?: (options: {
+    readonly projectRoot: string;
+    readonly runId: string;
+  }) => Promise<ReportIssue>;
+  readonly loadEditorial?: (projectRoot: string) => EditorialConfig;
+  readonly prepareVisual?: (options: {
+    readonly projectRoot: string;
+    readonly report: RunReport;
+    readonly issue: ReportIssue;
+    readonly config: EditorialConfig;
+  }) => Promise<PreparedReportVisual>;
+  readonly renderEditorial?: (options: {
+    readonly projectRoot: string;
+    readonly report: RunReport;
+    readonly visual: PreparedReportVisual;
+  }) => EditorialCardArtifact;
   readonly render?: (options: {
     readonly projectRoot: string;
     readonly report: RunReport;
@@ -267,32 +293,16 @@ function writeCheckpoint(
 }
 
 function fixedReport(
-  projectRoot: string,
   now: Date,
   runId: string,
+  issue: ReportIssue,
 ): RunReport {
-  const timestamp = now.toISOString();
-  return buildRunReport({
-    projectRoot,
-    authority: {
-      runId,
-      taskId: TEST_TASK_ID,
-      taskName: TEST_TASK_NAME,
-      projectLabel: "WeChatPilot",
-      status: "success",
-      startedAt: timestamp,
-      finishedAt: timestamp,
-    },
-    draft: {
-      version: 1,
-      summary: ["值守员文字与 PNG 报告卡发送链路验证成功"],
-      metrics: [
-        { label: "报告类型", value: "确定性本地渲染" },
-        { label: "发送目标", value: "已绑定本人微信" },
-      ],
-      failure: null,
-      artifacts: [],
-    },
+  return buildFixedEditorialReport({
+    runId,
+    finishedAt: now.toISOString(),
+    issue,
+    taskId: TEST_TASK_ID,
+    taskName: TEST_TASK_NAME,
   });
 }
 
@@ -301,15 +311,43 @@ async function createCheckpoint(options: {
   readonly now: Date;
   readonly dependencies: SendRunReportTestDependencies;
 }): Promise<TestCardCheckpoint> {
-  const report = fixedReport(
-    options.projectRoot,
-    options.now,
-    options.dependencies.createRunId?.() ?? randomUUID(),
-  );
-  const render =
-    options.dependencies.render ??
-    (await import("../observer/report-card.js")).renderReportCard;
-  const artifact = render({ projectRoot: options.projectRoot, report });
+  const runId = options.dependencies.createRunId?.() ?? randomUUID();
+  const issue = await (options.dependencies.assignIssue ?? assignReportIssue)({
+    projectRoot: options.projectRoot,
+    runId,
+  });
+  const report = fixedReport(options.now, runId, issue);
+  let artifact: ReportCardArtifact | EditorialCardArtifact;
+  if (options.dependencies.render !== undefined) {
+    artifact = options.dependencies.render({
+      projectRoot: options.projectRoot,
+      report,
+    });
+  } else {
+    const config = (
+      options.dependencies.loadEditorial ?? loadEditorialConfig
+    )(options.projectRoot);
+    if (config.mode !== "editorial") {
+      throw checkpointError();
+    }
+    const prepareVisual =
+      options.dependencies.prepareVisual ??
+      (await import("../observer/report-visual.js")).prepareReportVisual;
+    const visual = await prepareVisual({
+      projectRoot: options.projectRoot,
+      report,
+      issue,
+      config,
+    });
+    const renderEditorial =
+      options.dependencies.renderEditorial ??
+      (await import("../observer/editorial-card.js")).renderEditorialReportCard;
+    artifact = renderEditorial({
+      projectRoot: options.projectRoot,
+      report,
+      visual,
+    });
+  }
   const imagePath = canonicalImagePath(report);
   const expectedImagePath = resolveProjectPath(options.projectRoot, imagePath);
   if (resolve(artifact.pngPath) !== expectedImagePath) {

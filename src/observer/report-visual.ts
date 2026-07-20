@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readdirSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 
 import { Resvg } from "@resvg/resvg-js";
-import { z } from "zod";
 
 import { pngDimensions, isValidPng } from "../lib/png.js";
 import {
@@ -21,61 +19,18 @@ import {
 import type { EditorialConfig } from "./editorial-config.js";
 import { ProjectRelativeArtifactPathSchema, RunReportSchema, type RunReport } from "./run-report.js";
 import type { ReportIssue } from "./report-sequence.js";
+import {
+  inspectReportVisuals,
+  readReportVisualLedger,
+  ReportVisualLedgerSchema,
+  type ReportVisualLedger,
+  REPORT_VISUAL_MAXIMUM_ATTEMPTS as MAXIMUM_ATTEMPTS,
+  REPORT_VISUAL_MAXIMUM_HERO_BYTES as MAXIMUM_HERO_BYTES,
+  REPORT_VISUAL_STYLE_VERSION as STYLE_VERSION,
+} from "./report-visual-state.js";
 
-const MAXIMUM_LEDGER_BYTES = 64 * 1_024;
-const MAXIMUM_HERO_BYTES = 20 * 1_024 * 1_024;
-const MAXIMUM_ATTEMPTS = 3;
 const RETRY_DELAYS_MS = [5_000, 15_000] as const;
-const STYLE_VERSION = "editorial-v1" as const;
 const HASH = /^[a-f0-9]{64}$/u;
-
-const baseShape = {
-  version: z.literal(1),
-  runId: z.uuid(),
-  issueNumber: z.number().int().positive().max(999_999),
-  reportSha256: z.string().regex(HASH),
-  attempts: z.number().int().min(0).max(MAXIMUM_ATTEMPTS),
-} as const;
-
-const ReportVisualLedgerSchema = z.discriminatedUnion("status", [
-  z
-    .object({
-      ...baseShape,
-      status: z.literal("pending"),
-    })
-    .strict(),
-  z
-    .object({
-      ...baseShape,
-      status: z.literal("generating"),
-      attempts: z.number().int().min(1).max(MAXIMUM_ATTEMPTS),
-      promptSha256: z.string().regex(HASH),
-    })
-    .strict(),
-  z
-    .object({
-      ...baseShape,
-      status: z.literal("generated"),
-      attempts: z.number().int().min(1).max(MAXIMUM_ATTEMPTS),
-      promptSha256: z.string().regex(HASH),
-      heroPath: ProjectRelativeArtifactPathSchema,
-      heroSha256: z.string().regex(HASH),
-      styleVersion: z.literal(STYLE_VERSION),
-    })
-    .strict(),
-  z
-    .object({
-      ...baseShape,
-      status: z.literal("fallback"),
-      stableCode: z.literal("IMAGE_GENERATION_UNAVAILABLE"),
-      heroPath: ProjectRelativeArtifactPathSchema,
-      heroSha256: z.string().regex(HASH),
-      styleVersion: z.literal(STYLE_VERSION),
-    })
-    .strict(),
-]);
-
-type ReportVisualLedger = z.infer<typeof ReportVisualLedgerSchema>;
 
 export interface PreparedReportVisual {
   readonly mode: "generated" | "fallback";
@@ -149,13 +104,7 @@ function readLedger(
   projectRoot: string,
   path: string,
 ): ReportVisualLedger | null {
-  const bytes = readProjectBytes(projectRoot, path, MAXIMUM_LEDGER_BYTES);
-  if (bytes === null) {
-    return null;
-  }
-  return ReportVisualLedgerSchema.parse(
-    JSON.parse(bytes.toString("utf8")) as unknown,
-  );
+  return readReportVisualLedger(projectRoot, path);
 }
 
 function relativeHeroPath(projectRoot: string, absolutePath: string): string {
@@ -417,70 +366,4 @@ export async function prepareReportVisual(options: {
   );
 }
 
-function recordArtifactValid(
-  projectRoot: string,
-  ledger: ReportVisualLedger,
-): boolean {
-  if (ledger.status !== "generated" && ledger.status !== "fallback") {
-    return true;
-  }
-  try {
-    preparedFromLedger(projectRoot, ledger);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function inspectReportVisuals(projectRoot: string): {
-  readonly pending: number;
-  readonly fallback: number;
-  readonly invalid: number;
-} {
-  let pending = 0;
-  let fallback = 0;
-  let invalid = 0;
-  const directory = join(projectRoot, ".state", "observer", "visuals");
-  let entries;
-  try {
-    const metadata = lstatSync(directory);
-    if (
-      metadata.isSymbolicLink() ||
-      !metadata.isDirectory() ||
-      (metadata.mode & 0o777) !== 0o700
-    ) {
-      return { pending, fallback, invalid: 1 };
-    }
-    entries = readdirSync(directory, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { pending, fallback, invalid };
-    }
-    return { pending, fallback, invalid: 1 };
-  }
-
-  for (const entry of entries) {
-    try {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) {
-        throw new Error("invalid entry");
-      }
-      const path = join(directory, entry.name);
-      const ledger = readLedger(projectRoot, path);
-      if (
-        ledger === null ||
-        entry.name !== `${ledger.runId}.json` ||
-        !recordArtifactValid(projectRoot, ledger)
-      ) {
-        throw new Error("invalid record");
-      }
-      if (ledger.status === "pending" || ledger.status === "generating") {
-        pending += 1;
-      } else if (ledger.status === "fallback") {
-        fallback += 1;
-      }
-    } catch {
-      invalid += 1;
-    }
-  }
-  return { pending, fallback, invalid };
-}
+export { inspectReportVisuals };

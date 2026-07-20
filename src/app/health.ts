@@ -25,6 +25,13 @@ import {
   loadObserverConfig,
   type ObserverConfig,
 } from "../observer/config.js";
+import {
+  loadEditorialConfig,
+  type EditorialConfig,
+} from "../observer/editorial-config.js";
+import { reportImageCapabilityReady } from "../observer/report-image-capability.js";
+import { inspectReportSequence } from "../observer/report-sequence.js";
+import { inspectReportVisuals } from "../observer/report-visual-state.js";
 import type { RunReport } from "../observer/run-report.js";
 import {
   inspectRunState,
@@ -78,6 +85,17 @@ export interface HealthProbes {
   readonly verifyVendorArtifacts: (projectRoot: string) => void;
   readonly loadObserverConfig: (projectRoot: string) => ObserverConfig;
   readonly rendererReady: () => boolean;
+  readonly loadEditorialConfig: (projectRoot: string) => EditorialConfig;
+  readonly imageCapabilityReady: (options: {
+    readonly projectRoot: string;
+    readonly config: EditorialConfig;
+  }) => boolean;
+  readonly inspectReportSequence: (projectRoot: string) => boolean;
+  readonly inspectReportVisuals: (projectRoot: string) => {
+    readonly pending: number;
+    readonly fallback: number;
+    readonly invalid: number;
+  };
   readonly inspectRunState: (projectRoot: string) => {
     readonly recoveryPending: number;
     readonly invalidRecords: number;
@@ -136,6 +154,12 @@ export interface ProjectHealthReport {
     readonly status: CheckStatus;
     readonly configValid: boolean;
     readonly rendererReady: boolean;
+    readonly imageConfigValid: boolean;
+    readonly imageCapabilityReady: boolean;
+    readonly sequenceLedgerValid: boolean;
+    readonly pendingVisuals: number;
+    readonly fallbackVisuals: number;
+    readonly invalidVisualRecords: number;
     readonly pendingRecoveryReports: number;
     readonly pendingDeliveries: number;
     readonly indeterminateDeliveries: number;
@@ -218,6 +242,10 @@ const defaultProbes: HealthProbes = {
   verifyVendorArtifacts: verifyVendorWechatArtifacts,
   loadObserverConfig,
   rendererReady: defaultRendererReady,
+  loadEditorialConfig,
+  imageCapabilityReady: reportImageCapabilityReady,
+  inspectReportSequence,
+  inspectReportVisuals,
   inspectRunState,
   listFinalRunReports,
   inspectRunDeliveryState,
@@ -482,6 +510,62 @@ export function inspectProjectHealth(
     diagnostics.push("observer renderer check failed");
   }
 
+  let imageConfig: EditorialConfig | undefined;
+  let imageConfigValid = false;
+  try {
+    imageConfig = probes.loadEditorialConfig(paths.root);
+    imageConfigValid = true;
+  } catch {
+    diagnostics.push("observer image configuration check failed");
+  }
+
+  const imageCapabilityReady =
+    imageConfig !== undefined &&
+    safeProbe(() =>
+      probes.imageCapabilityReady({
+        projectRoot: paths.root,
+        config: imageConfig!,
+      }),
+    );
+  if (!imageCapabilityReady) {
+    diagnostics.push("observer image capability unavailable");
+  }
+
+  const sequenceLedgerValid = safeProbe(() =>
+    probes.inspectReportSequence(paths.root),
+  );
+  if (!sequenceLedgerValid) {
+    diagnostics.push("observer sequence state check failed");
+  }
+
+  let pendingVisuals = 0;
+  let fallbackVisuals = 0;
+  let invalidVisualRecords = 0;
+  let visualStateValid = true;
+  try {
+    const visual = probes.inspectReportVisuals(paths.root);
+    const pending = safeCount(visual.pending);
+    const fallback = safeCount(visual.fallback);
+    const invalid = safeCount(visual.invalid);
+    if (pending === null || fallback === null || invalid === null) {
+      visualStateValid = false;
+      invalidVisualRecords = 1;
+    } else {
+      pendingVisuals = pending;
+      fallbackVisuals = fallback;
+      invalidVisualRecords = invalid;
+    }
+  } catch {
+    visualStateValid = false;
+    invalidVisualRecords = 1;
+  }
+  if (pendingVisuals > 0) {
+    diagnostics.push("observer visual pending");
+  }
+  if (!visualStateValid || invalidVisualRecords > 0) {
+    diagnostics.push("observer visual state check failed");
+  }
+
   let pendingRecoveryReports = 0;
   let pendingDeliveries = 0;
   let indeterminateDeliveries = 0;
@@ -548,12 +632,23 @@ export function inspectProjectHealth(
   const observerReady =
     observerConfigValid &&
     rendererReady &&
+    imageConfigValid &&
+    imageCapabilityReady &&
+    sequenceLedgerValid &&
+    visualStateValid &&
+    invalidVisualRecords === 0 &&
     observerStateValid &&
     invalidStateRecords === 0;
   const observer = {
     status: status(observerReady),
     configValid: observerConfigValid,
     rendererReady,
+    imageConfigValid,
+    imageCapabilityReady,
+    sequenceLedgerValid,
+    pendingVisuals,
+    fallbackVisuals,
+    invalidVisualRecords,
     pendingRecoveryReports,
     pendingDeliveries,
     indeterminateDeliveries,
@@ -561,6 +656,7 @@ export function inspectProjectHealth(
   } as const;
   const observerPending =
     pendingRecoveryReports > 0 ||
+    pendingVisuals > 0 ||
     pendingDeliveries > 0 ||
     indeterminateDeliveries > 0;
 

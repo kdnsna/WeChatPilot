@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import {
+  readProjectBytes,
   readProjectText,
   writeProjectTextAtomic,
 } from "../lib/project-file.js";
@@ -96,5 +97,24 @@ export async function assignReportIssue(options: {
     return issue(number);
   } finally {
     await lock.release();
+  }
+}
+
+export function inspectReportSequence(projectRoot: string): boolean {
+  try {
+    const path = join(
+      projectRoot,
+      ".state",
+      "observer",
+      "report-sequence.json",
+    );
+    const bytes = readProjectBytes(projectRoot, path, MAXIMUM_LEDGER_BYTES);
+    if (bytes === null) {
+      return true;
+    }
+    ReportSequenceSchema.parse(JSON.parse(bytes.toString("utf8")) as unknown);
+    return true;
+  } catch {
+    return false;
   }
 }

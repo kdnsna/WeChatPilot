@@ -20,7 +20,9 @@
     "send:digest": "tsx src/cli/send-digest.ts",
     "scheduled": "tsx src/cli/scheduled.ts --project-root \"/Users/kdnsna/Documents/微信 chat\"",
     "observer": "tsx src/cli/observer.ts --project-root \"/Users/kdnsna/Documents/微信 chat\" --job daily-tech-digest",
-    "report:test": "tsx src/cli/send-run-report-test.ts",
+    "report:image-probe": "tsx src/cli/probe-report-image.ts --project-root \"/Users/kdnsna/Documents/微信 chat\"",
+    "report:preview": "tsx src/cli/render-run-report-preview.ts --project-root \"/Users/kdnsna/Documents/微信 chat\"",
+    "report:test": "tsx src/cli/send-run-report-test.ts --project-root \"/Users/kdnsna/Documents/微信 chat\"",
     "health": "tsx src/cli/health.ts"
   },
   "dependencies": {

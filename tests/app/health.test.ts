@@ -82,6 +82,13 @@ function healthyProbes(
     }),
     loadObserverConfig: () => OBSERVER_CONFIG,
     rendererReady: () => true,
+    loadEditorialConfig: () => ({
+      codex: { version: "0.144.4" },
+      style: { version: "editorial-v1" },
+    }) as never,
+    imageCapabilityReady: () => true,
+    inspectReportSequence: () => true,
+    inspectReportVisuals: () => ({ pending: 0, fallback: 0, invalid: 0 }),
     inspectRunState: () => ({ recoveryPending: 0, invalidRecords: 0 }),
     listFinalRunReports: () => [],
     inspectRunDeliveryState: () => ({
@@ -178,6 +185,12 @@ describe("project health", () => {
         status: "ok",
         configValid: true,
         rendererReady: true,
+        imageConfigValid: true,
+        imageCapabilityReady: true,
+        sequenceLedgerValid: true,
+        pendingVisuals: 0,
+        fallbackVisuals: 0,
+        invalidVisualRecords: 0,
         pendingRecoveryReports: 0,
         pendingDeliveries: 0,
         indeterminateDeliveries: 0,
@@ -377,6 +390,12 @@ describe("project health", () => {
       status: "ok",
       configValid: true,
       rendererReady: true,
+      imageConfigValid: true,
+      imageCapabilityReady: true,
+      sequenceLedgerValid: true,
+      pendingVisuals: 0,
+      fallbackVisuals: 0,
+      invalidVisualRecords: 0,
       pendingRecoveryReports: 2,
       pendingDeliveries: 3,
       indeterminateDeliveries: 4,
@@ -391,6 +410,83 @@ describe("project health", () => {
     expect(serialized).not.toContain(secretRunId);
     expect(serialized).not.toContain(root);
     expect(healthExitCode(report)).toBe(0);
+  });
+
+  it("reports safe Image 2 capability and visual ledger diagnostics", () => {
+    const root = project();
+    const secretRunId = "019c7714-3b77-74d1-9866-e1f484aae2ab";
+    const secretIssue = "WP-654321";
+    const secretPrompt = "PRIVATE_IMAGE_PROMPT";
+    const secretPath = "/private/generated/hero.png";
+    const rawFailure = `${secretRunId} ${secretIssue} ${secretPrompt} ${secretPath}`;
+    const report = inspectProjectHealth({
+      projectRoot: root,
+      probes: healthyProbes({
+        wechatHealth: () => ({
+          credentialsReady: true,
+          ownerBound: true,
+          contextReady: true,
+        }),
+        imageCapabilityReady: () => {
+          throw new Error(rawFailure);
+        },
+        inspectReportVisuals: () => ({ pending: 2, fallback: 3, invalid: 1 }),
+      }),
+    });
+
+    expect(report.status).toBe("failed");
+    expect(report.requiredReady).toBe(false);
+    expect(report.observer).toMatchObject({
+      imageConfigValid: true,
+      imageCapabilityReady: false,
+      sequenceLedgerValid: true,
+      pendingVisuals: 2,
+      fallbackVisuals: 3,
+      invalidVisualRecords: 1,
+    });
+    expect(report.diagnostics).toEqual(
+      expect.arrayContaining([
+        "observer image capability unavailable",
+        "observer visual pending",
+        "observer visual state check failed",
+      ]),
+    );
+    const serialized = JSON.stringify(report);
+    for (const secret of [secretRunId, secretIssue, secretPrompt, secretPath, rawFailure]) {
+      expect(serialized).not.toContain(secret);
+    }
+  });
+
+  it("keeps completed fallbacks ready and marks only pending visuals pending", () => {
+    const root = project();
+    const fallbackOnly = inspectProjectHealth({
+      projectRoot: root,
+      probes: healthyProbes({
+        wechatHealth: () => ({
+          credentialsReady: true,
+          ownerBound: true,
+          contextReady: true,
+        }),
+        inspectReportVisuals: () => ({ pending: 0, fallback: 4, invalid: 0 }),
+      }),
+    });
+    expect(fallbackOnly.status).toBe("ready");
+    expect(fallbackOnly.observer.fallbackVisuals).toBe(4);
+
+    const pending = inspectProjectHealth({
+      projectRoot: root,
+      probes: healthyProbes({
+        wechatHealth: () => ({
+          credentialsReady: true,
+          ownerBound: true,
+          contextReady: true,
+        }),
+        inspectReportVisuals: () => ({ pending: 1, fallback: 0, invalid: 0 }),
+      }),
+    });
+    expect(pending.status).toBe("pending");
+    expect(pending.requiredReady).toBe(true);
+    expect(pending.diagnostics).toContain("observer visual pending");
   });
 
   it("uses one reports-aware delivery inspection without separate disposition probes", () => {
