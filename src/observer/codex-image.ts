@@ -408,6 +408,16 @@ function sha256(bytes: Uint8Array | string): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+export function codexImagePromptSha256(
+  projectRoot: string,
+  report: RunReport,
+  issue: ReportIssue,
+): string {
+  return sha256(
+    buildPrompt(projectRoot, buildVisualBrief(report, issue)),
+  );
+}
+
 export async function generateCodexHero(options: {
   readonly projectRoot: string;
   readonly report: RunReport;
