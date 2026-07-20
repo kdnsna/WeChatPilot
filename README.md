@@ -9,7 +9,7 @@
 - macOS 当前用户权限，不需要 `sudo`。
 - 固定运行时：`/opt/homebrew/opt/node@22/bin/node`（已验证为 Node 22.23.1）。
 - Codex：由 `config/digest.yaml` 固定为检测到的 Node 可执行文件与官方 CLI JavaScript 入口。
-- 微信依赖：`vendor/cli-in-wechat` Git submodule，固定提交 `75d7db9338e133080fef9914b92ceb5e3ebd0dfc`，不跟随任何分支。
+- 微信依赖：`vendor/cli-in-wechat` Git submodule，固定提交 `75d7db9338e133080fef9914b92ceb5e3ebd0dfc`，不跟随任何分支。构建后仅对未跟踪的 QR 运行时产物应用已审计的 45 秒长轮询补丁，上游源码和 submodule 指针保持不变。
 
 不要运行 vendor 内的 `npm start`、`npm run dev` 或其主入口。项目只校验并动态加载审计过的 QR、HTTP 和加密辅助模块；构建产物必须同时通过 `config/vendor-wechat-artifacts.json` 的大小和 SHA-256 清单。
 
