@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"redacted"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"redacted-progress","type":"agent_message","text":"{\"status\":\"generated\",\"imagePath\":\"/Users/example/.codex/generated_images/redacted/progress.png\"}"}}
+{"type":"item.completed","item":{"id":"redacted-final","type":"agent_message","text":"{\"status\":\"generated\",\"imagePath\":\"/Users/example/.codex/generated_images/redacted/probe.png\"}"}}
+{"type":"turn.completed","usage":{}}

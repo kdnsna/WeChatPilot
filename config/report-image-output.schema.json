@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "imagePath"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["generated"]
+    },
+    "imagePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    }
+  }
+}

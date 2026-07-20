@@ -108,9 +108,9 @@ The child receives a sanitized visual brief containing only:
 
 It never receives WeChat messages, recipient data, credentials, local paths, source URLs, the full digest, arbitrary user text, or executable instructions.
 
-The parent parses Codex JSON events in memory. Only the built-in image-generation tool and a final structured response are allowed. If an event indicates a shell, browser, App, plugin, hook, computer-use, or any other non-image tool, the artifact is rejected and the attempt fails. Raw events, prompts, authentication data, and generated-image source paths are not logged.
+The parent parses Codex JSON events in memory. Codex CLI 0.144.4 does not expose built-in image-generation calls as a dedicated `exec --json` item, and it may emit multiple schema-constrained progress messages. The parent therefore accepts only lifecycle, reasoning, and agent-message events, rejects every exposed shell, browser, App, plugin, hook, computer-use, or other tool item, and treats the last completed agent message as the structured result. Raw events, prompts, authentication data, and generated-image source paths are not logged.
 
-The structured response may return only the generated artifact path and a fixed success marker. The parent accepts one regular image file from the Codex-owned generated-images directory, using exact path containment and file-identity checks. It copies that one file into the report artifact directory; it never scans a personal directory.
+The structured response may return only the generated artifact path and a fixed success marker. The parent accepts one regular image file strictly beneath the Codex-owned `$CODEX_HOME/generated_images/` directory, including a tool-created generation subdirectory, using normalized path containment and file-identity checks. It copies that one file into the report artifact directory; it never scans a personal directory.
 
 The implementation must not set, clear, or repurpose `HOME` or `CODEX_HOME`.
 

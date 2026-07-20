@@ -308,17 +308,18 @@ Expected: PASS.
 Run the exact configured invocation from the feature worktree with a fixed probe brief through stdin. Capture JSONL and the final message only in a `mktemp -d` directory. Validate that:
 
 - the process exits 0 within 180 seconds;
-- exactly one image-generation tool item appears;
-- no other tool item appears;
+- no exposed command, MCP, browser, App, plugin, hook, computer-use, or other tool item appears;
+- lifecycle, reasoning, and one or more schema-constrained agent-message items are the only accepted event shapes;
 - the final JSON matches `report-image-output.schema.json`;
-- `imagePath` resolves to a regular PNG beneath the existing Codex generated-images directory;
+- the last completed agent message supplies the final JSON;
+- `imagePath` resolves to a regular PNG strictly beneath the existing `$CODEX_HOME/generated_images/` directory, including a generated batch subdirectory;
 - the image is not copied into the project during this probe.
 
 Expected terminal output: one safe line, `codex-image-probe: passed`. Do not print the prompt, raw event stream, image path, auth state, or response body. If the probe fails, stop the plan here and report the stable failing gate; do not implement an API-key fallback.
 
 - [ ] **Step 9: Save redacted event-shape fixtures and commit**
 
-Replace the real path in the successful event stream with `/Users/example/.codex/generated_images/probe.png`, remove usage and thread identifiers, and save only the minimum events needed for parser tests in `tests/fixtures/codex-image/success.jsonl`. Create `unexpected-tool.jsonl` by changing the tool item to `shell_tool`.
+Replace the real path in the successful event stream with `/Users/example/.codex/generated_images/redacted/probe.png`, remove usage and thread identifiers, and save only the minimum lifecycle and agent-message events needed for parser tests in `tests/fixtures/codex-image/success.jsonl`. Preserve two safe schema-constrained agent messages so the parser test proves that the last one is authoritative. Create `unexpected-tool.jsonl` by adding a `command_execution` item.
 
 Run:
 
@@ -658,7 +659,7 @@ expect(result).toEqual({
 });
 ```
 
-Require failure on an unexpected tool item, missing image item, two image items, malformed final JSON, a path outside generated-images, a symlink, a changed file during read, a non-PNG, dimensions below 768 × 768, and more than 20 MiB. The tool-owned source mode is not authoritative; the project-local copied hero must be 0600.
+Require failure on an unexpected tool item, no completed agent message, malformed last-message JSON, a path outside generated-images, a path equal to the generated-images root, a symlink, a changed file during read, a non-PNG, dimensions below 768 × 768, and more than 20 MiB. Require multiple schema-constrained messages to select the last one. The tool-owned source mode is not authoritative; the project-local copied hero must be 0600.
 
 - [ ] **Step 2: Run the focused tests and verify failure**
 
@@ -741,11 +742,11 @@ export function generateCodexHero(options: {
 }): Promise<GeneratedHeroArtifact>;
 ```
 
-Parse each JSONL line with a strict event-shape adapter derived from the redacted feasibility fixture. Permit lifecycle events, one image-generation tool item, and one final agent message. Reject every other tool item before accepting an artifact. Never persist or log raw JSONL.
+Parse each JSONL line with a strict event-shape adapter derived from the redacted feasibility fixture. Permit lifecycle, reasoning, and agent-message items only; require at least one completed agent message and parse the last one as the final structured result. Codex CLI 0.144.4 does not expose the built-in Image 2 call as a dedicated JSONL item, so reject every exposed command, MCP, browser, App, plugin, hook, computer-use, or unknown item before accepting an artifact. Never persist or log raw JSONL.
 
 - [ ] **Step 6: Ingest one exact external artifact**
 
-Resolve the allowed generated-images root from the existing environment without changing `HOME` or `CODEX_HOME`. Require the returned absolute path to be a direct contained regular file, open with `O_NOFOLLOW`, compare `lstat` and `fstat`, read at most 20 MiB, validate PNG structure and dimensions, verify identity after read, then atomically copy bytes to the project-relative hero path. Do not enumerate the external directory.
+Resolve the allowed `$CODEX_HOME/generated_images/` root from the existing environment without changing `HOME` or `CODEX_HOME`. Require the returned absolute path to be a normalized strict descendant regular file (generation subdirectories are allowed; equality and traversal are not), open with `O_NOFOLLOW`, compare `lstat` and `fstat`, read at most 20 MiB, validate PNG structure and dimensions, verify identity after read, then atomically copy bytes to the project-relative hero path. Do not enumerate the external directory.
 
 - [ ] **Step 7: Run tests and commit**
 

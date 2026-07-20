@@ -1,0 +1,70 @@
+version: 1
+mode: editorial
+canvas:
+  width: 1080
+  height: 2400
+  maximumBytes: 5242880
+generation:
+  maximumAttempts: 3
+  timeoutMs: 180000
+style:
+  version: editorial-v1
+  heroHeight: 480
+codex:
+  version: 0.144.4
+  nodeExecutable: /opt/homebrew/opt/node@22/bin/node
+  javascriptEntrypoint: /opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js
+  globalArgs:
+    - --sandbox
+    - read-only
+    - --ask-for-approval
+    - never
+    - --cd
+    - "{projectRoot}"
+    - --enable
+    - image_generation
+    - --disable
+    - apps
+    - --disable
+    - plugins
+    - --disable
+    - hooks
+    - --disable
+    - browser_use
+    - --disable
+    - computer_use
+    - --disable
+    - in_app_browser
+    - --disable
+    - shell_tool
+    - --disable
+    - unified_exec
+    - --disable
+    - shell_snapshot
+    - --disable
+    - multi_agent
+    - --disable
+    - goals
+    - --disable
+    - code_mode_host
+    - --disable
+    - workspace_dependencies
+    - --disable
+    - chronicle
+    - --disable
+    - memories
+    - --disable
+    - tool_suggest
+    - --disable
+    - auth_elicitation
+  command: exec
+  execArgs:
+    - --ephemeral
+    - --ignore-user-config
+    - --ignore-rules
+    - --color
+    - never
+    - --json
+    - --output-schema
+    - "{projectRoot}/config/report-image-output.schema.json"
+    - "-"
