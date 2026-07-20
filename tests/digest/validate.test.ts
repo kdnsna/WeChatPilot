@@ -4,6 +4,7 @@ import {
   DigestValidationError,
   parseAndValidateDigest,
 } from "../../src/digest/validate.js";
+import { validEditorial } from "../helpers/editorial.js";
 
 const DATE = "2026-07-18";
 const TITLE = "《科技与灵感日报｜2026年07月18日》";
@@ -36,7 +37,13 @@ function validDigest(): string {
 describe("digest output validation", () => {
   it("accepts the exact section counts, candidate URLs, title, and length", () => {
     const result = parseAndValidateDigest(
-      JSON.stringify({ title: TITLE, date: DATE, digest: validDigest(), sourceUrls: urls }),
+      JSON.stringify({
+        title: TITLE,
+        date: DATE,
+        digest: validDigest(),
+        sourceUrls: urls,
+        editorial: validEditorial(urls),
+      }),
       { date: DATE, allowedUrls: urls },
     );
 
@@ -91,6 +98,7 @@ describe("digest output validation", () => {
           date: DATE,
           digest: `${digest}\nhttps://outside.test/not-allowed`,
           sourceUrls: [...urls.slice(0, -1), "https://outside.test/not-allowed"],
+          editorial: validEditorial(urls),
         }),
         { date: DATE, allowedUrls: urls },
       ),
@@ -101,9 +109,32 @@ describe("digest output validation", () => {
     const shortDigest = `${TITLE}\n一、今日技术社区热议\n二、科技圈核心新闻\n三、GitHub 今日发现\n四、今日深度阅读\n五、今日一句判断`;
     expect(() =>
       parseAndValidateDigest(
-        JSON.stringify({ title: TITLE, date: DATE, digest: shortDigest, sourceUrls: urls }),
+        JSON.stringify({
+          title: TITLE,
+          date: DATE,
+          digest: shortDigest,
+          sourceUrls: urls,
+          editorial: validEditorial(urls),
+        }),
         { date: DATE, allowedUrls: urls },
       ),
     ).toThrow(/digest:too_small/i);
+  });
+
+  it("rejects editorial sources absent from the top-level and approved URLs", () => {
+    const editorial = validEditorial(urls);
+    editorial.highlights[0]!.sourceUrls = ["https://outside.test/editorial"];
+    expect(() =>
+      parseAndValidateDigest(
+        JSON.stringify({
+          title: TITLE,
+          date: DATE,
+          digest: validDigest(),
+          sourceUrls: urls,
+          editorial,
+        }),
+        { date: DATE, allowedUrls: [...urls, "https://outside.test/editorial"] },
+      ),
+    ).toThrow(/editorial source/i);
   });
 });

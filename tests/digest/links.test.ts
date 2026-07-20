@@ -10,6 +10,7 @@ import {
 } from "../../src/digest/links.js";
 import type { DigestOutput } from "../../src/digest/validate.js";
 import type { FetchLike } from "../../src/lib/http.js";
+import { validEditorial } from "../helpers/editorial.js";
 
 const DATE = "2026-07-18";
 const TITLE = "《科技与灵感日报｜2026年07月18日》";
@@ -53,7 +54,13 @@ function digestWith(urls: readonly string[]): string {
 }
 
 function output(urls: readonly string[] = PRIMARY_URLS): DigestOutput {
-  return { title: TITLE, date: DATE, digest: digestWith(urls), sourceUrls: [...urls] };
+  return {
+    title: TITLE,
+    date: DATE,
+    digest: digestWith(urls),
+    sourceUrls: [...urls],
+    editorial: validEditorial(urls),
+  };
 }
 
 function candidate(
@@ -502,6 +509,10 @@ describe("digest source-link accessibility", () => {
     expect(repaired.sourceUrls[0]).toBe(discussionUrl);
     expect(repaired.digest).toContain(discussionUrl);
     expect(repaired.digest).not.toContain(PRIMARY_URLS[0]);
+    expect(repaired.editorial.highlights[0]?.sourceUrls).toContain(discussionUrl);
+    expect(repaired.editorial.highlights[0]?.sourceUrls).not.toContain(
+      PRIMARY_URLS[0],
+    );
     expect(probe).toHaveBeenCalledWith(discussionUrl, undefined);
     expect(probe).not.toHaveBeenCalledWith(mirrorUrl, undefined);
   });

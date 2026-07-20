@@ -4,9 +4,13 @@ import {
   constants,
   statSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { isAbsolute } from "node:path";
 
 import { loadConfig } from "../config/load.js";
+import {
+  inspectRunDeliveryState,
+} from "../delivery/run-report-delivery.js";
 import {
   verifyVendorWechatArtifacts,
   wechatHealth,
@@ -17,6 +21,22 @@ import {
   createProjectPaths,
   resolveProjectPath,
 } from "../lib/paths.js";
+import {
+  loadObserverConfig,
+  type ObserverConfig,
+} from "../observer/config.js";
+import {
+  loadEditorialConfig,
+  type EditorialConfig,
+} from "../observer/editorial-config.js";
+import { reportImageCapabilityReady } from "../observer/report-image-capability.js";
+import { inspectReportSequence } from "../observer/report-sequence.js";
+import { inspectReportVisuals } from "../observer/report-visual-state.js";
+import type { RunReport } from "../observer/run-report.js";
+import {
+  inspectRunState,
+  listFinalRunReports,
+} from "../observer/run-state.js";
 
 export const EXPECTED_VENDOR_HEAD =
   "75d7db9338e133080fef9914b92ceb5e3ebd0dfc";
@@ -63,6 +83,32 @@ export interface HealthProbes {
   ) => string;
   readonly wechatHealth: (projectRoot: string) => WechatHealthBooleans;
   readonly verifyVendorArtifacts: (projectRoot: string) => void;
+  readonly loadObserverConfig: (projectRoot: string) => ObserverConfig;
+  readonly rendererReady: () => boolean;
+  readonly loadEditorialConfig: (projectRoot: string) => EditorialConfig;
+  readonly imageCapabilityReady: (options: {
+    readonly projectRoot: string;
+    readonly config: EditorialConfig;
+  }) => boolean;
+  readonly inspectReportSequence: (projectRoot: string) => boolean;
+  readonly inspectReportVisuals: (projectRoot: string) => {
+    readonly pending: number;
+    readonly fallback: number;
+    readonly invalid: number;
+  };
+  readonly inspectRunState: (projectRoot: string) => {
+    readonly recoveryPending: number;
+    readonly invalidRecords: number;
+  };
+  readonly listFinalRunReports: (projectRoot: string) => readonly RunReport[];
+  readonly inspectRunDeliveryState: (options: {
+    readonly projectRoot: string;
+    readonly reports?: readonly RunReport[];
+  }) => {
+    readonly pending: number;
+    readonly indeterminate: number;
+    readonly invalid: number;
+  };
 }
 
 export interface ProjectHealthReport {
@@ -104,6 +150,21 @@ export interface ProjectHealthReport {
     readonly ownerBound: boolean;
     readonly contextReady: boolean;
   };
+  readonly observer: {
+    readonly status: CheckStatus;
+    readonly configValid: boolean;
+    readonly rendererReady: boolean;
+    readonly imageConfigValid: boolean;
+    readonly imageCapabilityReady: boolean;
+    readonly sequenceLedgerValid: boolean;
+    readonly pendingVisuals: number;
+    readonly fallbackVisuals: number;
+    readonly invalidVisualRecords: number;
+    readonly pendingRecoveryReports: number;
+    readonly pendingDeliveries: number;
+    readonly indeterminateDeliveries: number;
+    readonly invalidStateRecords: number;
+  };
   readonly diagnostics: readonly string[];
 }
 
@@ -139,6 +200,24 @@ function defaultDirectoryWritable(path: string): boolean {
   }
 }
 
+function defaultRendererReady(): boolean {
+  const require = createRequire(import.meta.url);
+  const { Resvg } = require("@resvg/resvg-js") as {
+    readonly Resvg: new (svg: string) => {
+      readonly render: () => { readonly asPng: () => Buffer };
+    };
+  };
+  const png = new Resvg(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>',
+  )
+    .render()
+    .asPng();
+  return (
+    png.length >= 8 &&
+    png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  );
+}
+
 const defaultProbes: HealthProbes = {
   runtimeVersion: () => process.versions.node,
   loadConfig,
@@ -161,6 +240,15 @@ const defaultProbes: HealthProbes = {
     }).trim(),
   wechatHealth,
   verifyVendorArtifacts: verifyVendorWechatArtifacts,
+  loadObserverConfig,
+  rendererReady: defaultRendererReady,
+  loadEditorialConfig,
+  imageCapabilityReady: reportImageCapabilityReady,
+  inspectReportSequence,
+  inspectReportVisuals,
+  inspectRunState,
+  listFinalRunReports,
+  inspectRunDeliveryState,
 };
 
 function status(value: boolean): CheckStatus {
@@ -185,6 +273,10 @@ function safeProbe(probe: () => boolean): boolean {
   } catch {
     return false;
   }
+}
+
+function safeCount(value: number): number | null {
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 function validJsonDocument(value: string | null): boolean {
@@ -405,16 +497,180 @@ export function inspectProjectHealth(
     contextReady,
   } as const;
 
+  let observerConfigValid = false;
+  try {
+    probes.loadObserverConfig(paths.root);
+    observerConfigValid = true;
+  } catch {
+    diagnostics.push("observer configuration check failed");
+  }
+
+  const rendererReady = safeProbe(probes.rendererReady);
+  if (!rendererReady) {
+    diagnostics.push("observer renderer check failed");
+  }
+
+  let imageConfig: EditorialConfig | undefined;
+  let imageConfigValid = false;
+  try {
+    imageConfig = probes.loadEditorialConfig(paths.root);
+    imageConfigValid = true;
+  } catch {
+    diagnostics.push("observer image configuration check failed");
+  }
+
+  const imageCapabilityReady =
+    imageConfig !== undefined &&
+    safeProbe(() =>
+      probes.imageCapabilityReady({
+        projectRoot: paths.root,
+        config: imageConfig!,
+      }),
+    );
+  if (!imageCapabilityReady) {
+    diagnostics.push("observer image capability unavailable");
+  }
+
+  const sequenceLedgerValid = safeProbe(() =>
+    probes.inspectReportSequence(paths.root),
+  );
+  if (!sequenceLedgerValid) {
+    diagnostics.push("observer sequence state check failed");
+  }
+
+  let pendingVisuals = 0;
+  let fallbackVisuals = 0;
+  let invalidVisualRecords = 0;
+  let visualStateValid = true;
+  try {
+    const visual = probes.inspectReportVisuals(paths.root);
+    const pending = safeCount(visual.pending);
+    const fallback = safeCount(visual.fallback);
+    const invalid = safeCount(visual.invalid);
+    if (pending === null || fallback === null || invalid === null) {
+      visualStateValid = false;
+      invalidVisualRecords = 1;
+    } else {
+      pendingVisuals = pending;
+      fallbackVisuals = fallback;
+      invalidVisualRecords = invalid;
+    }
+  } catch {
+    visualStateValid = false;
+    invalidVisualRecords = 1;
+  }
+  if (pendingVisuals > 0) {
+    diagnostics.push("observer visual pending");
+  }
+  if (!visualStateValid || invalidVisualRecords > 0) {
+    diagnostics.push("observer visual state check failed");
+  }
+
+  let pendingRecoveryReports = 0;
+  let pendingDeliveries = 0;
+  let indeterminateDeliveries = 0;
+  let invalidStateRecords = 0;
+  let observerStateValid = true;
+  let runStateScanned = false;
+  let reports: readonly RunReport[] = [];
+  try {
+    const state = probes.inspectRunState(paths.root);
+    const recoveryPending = safeCount(state.recoveryPending);
+    const invalidRecords = safeCount(state.invalidRecords);
+    if (recoveryPending === null || invalidRecords === null) {
+      observerStateValid = false;
+      invalidStateRecords += 1;
+    } else {
+      pendingRecoveryReports = recoveryPending;
+      invalidStateRecords += invalidRecords;
+      runStateScanned = true;
+    }
+  } catch {
+    observerStateValid = false;
+    invalidStateRecords += 1;
+  }
+  if (runStateScanned) {
+    try {
+      reports = probes.listFinalRunReports(paths.root);
+    } catch {
+      observerStateValid = false;
+      invalidStateRecords += 1;
+    }
+  }
+  try {
+    const delivery = probes.inspectRunDeliveryState({
+      projectRoot: paths.root,
+      reports,
+    });
+    const pending = safeCount(delivery.pending);
+    const indeterminate = safeCount(delivery.indeterminate);
+    const invalid = safeCount(delivery.invalid);
+    if (pending === null || indeterminate === null || invalid === null) {
+      observerStateValid = false;
+      invalidStateRecords += 1;
+    } else {
+      pendingDeliveries = pending;
+      indeterminateDeliveries = indeterminate;
+      invalidStateRecords += invalid;
+    }
+  } catch {
+    observerStateValid = false;
+    invalidStateRecords += 1;
+  }
+  if (pendingRecoveryReports > 0) {
+    diagnostics.push("observer recovery pending");
+  }
+  if (pendingDeliveries > 0) {
+    diagnostics.push("observer delivery pending");
+  }
+  if (indeterminateDeliveries > 0) {
+    diagnostics.push("observer delivery requires review");
+  }
+  if (!observerStateValid || invalidStateRecords > 0) {
+    diagnostics.push("observer state check failed");
+  }
+  const observerReady =
+    observerConfigValid &&
+    rendererReady &&
+    imageConfigValid &&
+    imageCapabilityReady &&
+    sequenceLedgerValid &&
+    visualStateValid &&
+    invalidVisualRecords === 0 &&
+    observerStateValid &&
+    invalidStateRecords === 0;
+  const observer = {
+    status: status(observerReady),
+    configValid: observerConfigValid,
+    rendererReady,
+    imageConfigValid,
+    imageCapabilityReady,
+    sequenceLedgerValid,
+    pendingVisuals,
+    fallbackVisuals,
+    invalidVisualRecords,
+    pendingRecoveryReports,
+    pendingDeliveries,
+    indeterminateDeliveries,
+    invalidStateRecords,
+  } as const;
+  const observerPending =
+    pendingRecoveryReports > 0 ||
+    pendingVisuals > 0 ||
+    pendingDeliveries > 0 ||
+    indeterminateDeliveries > 0;
+
   const requiredReady =
     runtime.status === "ok" &&
     config.status === "ok" &&
     vendor.status === "ok" &&
     directories.status === "ok" &&
-    codex.status === "ok";
+    codex.status === "ok" &&
+    observer.status === "ok";
   const overallStatus: ProjectHealthStatus =
     !requiredReady || wechat.status === "failed"
       ? "failed"
-      : wechat.status === "pending"
+      : wechat.status === "pending" || observerPending
         ? "pending"
         : "ready";
 
@@ -427,6 +683,7 @@ export function inspectProjectHealth(
     directories,
     codex,
     wechat,
+    observer,
     diagnostics,
   };
 }

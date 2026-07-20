@@ -35,10 +35,10 @@ jobs:
       - name: Install root dependencies
         run: npm ci
 
-      - name: Build pinned WeChat adapter
+      - name: Build and patch pinned WeChat adapter
         run: |
           npm --prefix vendor/cli-in-wechat ci
-          npm --prefix vendor/cli-in-wechat run build
+          npm run vendor:build
 
       - name: Verify project
         run: |

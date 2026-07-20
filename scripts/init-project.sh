@@ -11,7 +11,7 @@ cd "${PROJECT_ROOT}"
 
 "${NODE22}" "${NPM22}" ci
 "${NODE22}" "${NPM22}" --prefix "${PROJECT_ROOT}/vendor/cli-in-wechat" ci
-"${NODE22}" "${NPM22}" --prefix "${PROJECT_ROOT}/vendor/cli-in-wechat" run build
+"${NODE22}" "${NPM22}" run vendor:build
 "${NODE22}" "${NPM22}" run test
 "${NODE22}" "${NPM22}" run typecheck
 "${NODE22}" "${NPM22}" run build

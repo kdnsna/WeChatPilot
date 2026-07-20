@@ -1,0 +1,11 @@
+--- a/vendor/cli-in-wechat/dist/ilink/auth.js
++++ b/vendor/cli-in-wechat/dist/ilink/auth.js
+@@ -11,7 +11,7 @@ export async function getQRCode() {
+ }
+ export async function pollQRCodeStatus(qrcode) {
+     // Polled every 2s in a loop, so keep retries light — the loop itself is the outer retry.
+-    const res = await fetchWithRetry(`${DEFAULT_BASE_URL}/ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}`, { headers: { 'iLink-App-ClientVersion': '1' }, label: 'QR-status', retries: 1, timeoutMs: 15_000 });
++    const res = await fetchWithRetry(`${DEFAULT_BASE_URL}/ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}`, { headers: { 'iLink-App-ClientVersion': '1' }, label: 'QR-status', retries: 1, timeoutMs: 45_000 });
+     if (!res.ok)
+         throw new Error(`轮询二维码状态失败: HTTP ${res.status}`);
+     return res.json();

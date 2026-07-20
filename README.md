@@ -7,7 +7,7 @@ WeChatPilot 是一个运行在本机的微信 AI 自动化平台。当前内置�
 > [!IMPORTANT]
 > WeChatPilot 是独立、非微信或腾讯官方项目，与微信及腾讯不存在隶属、授权或背书关系。
 
-项目不会从微信执行命令，不会启动 `cli-in-wechat` 的 Router、Codex 适配器或远程控制入口，也不会使用 `--dangerously-bypass-approvals-and-sandbox`。微信凭据和 context token 只保存在本项目被 Git 忽略的 `.state/wechat/`，目录权限为 `0700`、文件权限为 `0600`；命令输出和日志只报告就绪状态，不显示具体值、用户 ID 或令牌。
+项目不会从微信执行命令，不会启动 `cli-in-wechat` 的 Router、Codex 适配器或远程控制入口，也不会使用 `--dangerously-bypass-approvals-and-sandbox`。微信不能启动、批准、恢复、停止或修改 Codex 任务；它在本项目中始终只是单向投递终点。微信凭据和 context token 只保存在本项目被 Git 忽略的 `.state/wechat/`，目录权限为 `0700`、文件权限为 `0600`；命令输出和日志只报告就绪状态，不显示具体值、用户 ID 或令牌。
 
 ## 产品方向
 
@@ -18,7 +18,7 @@ WeChatPilot 将科技日报作为首个经过真实运行验证的内置工作�
 - macOS 当前用户权限，不需要 `sudo`。
 - 固定运行时：`/opt/homebrew/opt/node@22/bin/node`（已验证为 Node 22.23.1）。
 - Codex：由 `config/digest.yaml` 固定为检测到的 Node 可执行文件与官方 CLI JavaScript 入口。
-- 微信依赖：`vendor/cli-in-wechat` Git submodule，固定提交 `75d7db9338e133080fef9914b92ceb5e3ebd0dfc`，不跟随任何分支。
+- 微信依赖：`vendor/cli-in-wechat` Git submodule，固定提交 `75d7db9338e133080fef9914b92ceb5e3ebd0dfc`，不跟随任何分支。构建后仅对未跟踪的 QR 运行时产物应用已审计的 45 秒长轮询补丁，上游源码和 submodule 指针保持不变。
 
 不要运行 vendor 内的 `npm start`、`npm run dev` 或其主入口。项目只校验并动态加载审计过的 QR、HTTP 和加密辅助模块；构建产物必须同时通过 `config/vendor-wechat-artifacts.json` 的大小和 SHA-256 清单。
 
@@ -42,6 +42,8 @@ cd '/Users/kdnsna/Documents/微信 chat'
 ```sh
 ./scripts/health-check.sh
 ```
+
+输出中的 `observer` 只有配置/渲染器/Image 2 就绪布尔值，以及待恢复、待发送、不确定投递、待生成视觉、固定背景视觉和无效状态记录的安全计数，不包含 run ID、期号、提示词或路径。待处理计数会把整体状态标为 `pending`，不代表必需环境损坏；无效配置、编号/视觉账本损坏、渲染器不可用或 Image 2 能力标记不匹配则返回 `failed`。健康检查不会为自证就绪而现场生成图片。若微信登录过期，重新运行 `./scripts/init-wechat.sh` 扫码初始化，不要手工编辑私有状态文件。
 
 只准备 Codex 输入、检查安全参数而不调用 Codex：
 
@@ -79,6 +81,14 @@ GitHub Token 是可选项；不设置时使用公开 API 降级运行。若临�
 ./scripts/send-test.sh
 ```
 
+显式发送一张固定值守员测试卡（会真实向已绑定本人微信发送文字和 PNG）：
+
+```sh
+./scripts/send-run-report-test.sh
+```
+
+测试卡没有收件人、命令、附件、模型、提示词或消息覆盖参数。Codex 内置 Image 2 只生成不含文字的主视觉；所有中文、期号、信号、行动和审计字段由本地确定性模板渲染。
+
 发送指定日期的完整日报：
 
 ```sh
@@ -86,6 +96,37 @@ GitHub Token 是可选项；不设置时使用公开 API 降级运行。若临�
 ```
 
 长文本遵循固定上游逻辑：每段最多 2000 个 JavaScript 字符单元，依次优先在段落、换行、空格处分段，最后才硬切，段间等待 300ms。主动发送 POST 不做未经证明的网络重放；响应丢失或部分分段成功会记为 `indeterminate`，当天停止自动重发，避免重复。完整日报使用原子锁和每日 ledger；成功后同一天任何再次调用都会被拒绝。确定失败最多允许初次加两次重试。
+
+## 编辑部情报长图与 Image 2
+
+每个新的最终 Observer 运行报告会获得一个连续期号，例如 `WP-000021`，并对应唯一的视觉账本、主视觉和最终 PNG。成功、跳过、失败、超时、取消、中断和恢复报告共用同一条期号序列。同一 run 重试时复用原期号、主视觉、报告内容和最终长图，不再分配新期号或重复生成。
+
+长图固定为 1080 × 2400 PNG，从上到下包含五个区域：
+
+1. 无文字主视觉、报告身份、期号、状态与时间。
+2. `EXECUTIVE BRIEF` 今日结论。
+3. 最多五项带 `01`–`05` 编号的重点信号、为何重要、来源数、置信度和影响。
+4. 三项可执行的下一步行动。
+5. Codex 执行与交付审计，包含候选/入选数、来源覆盖、耗时、视觉模式和短 run ID。
+
+Image 2 使用本机已登录的 Codex 内置认证，项目不读取、保存或要求 OpenAI API key。图片子进程仅接收经脱敏的视觉摘要，从 stdin 输入，且固定为临时、非交互、项目根目录、`read-only`、`approval never`。它只启用 `image_generation`，显式关闭 shell、unified exec、browser、computer use、Apps、plugins、hooks、多代理和额外目录；不接收微信消息、收件人、凭据、源 URL、完整日报、本机私有路径或可执行指令。
+
+先验证能力，再生成本地预览，最后才实发：
+
+```sh
+npm run report:image-probe
+npm run health
+npm run report:preview
+npm run report:test
+```
+
+`report:image-probe` 会调用一次相同的生产图片路径，完成后只保存 Codex 版本、样式版本、成功时间和产物哈希，并删除经文件身份核对的项目内探测图。`report:preview` 生成固定长图但不加载任何微信发送器。`report:test` 生成五项固定信号与三项行动，获得真实期号，然后向已绑定本人发送一次文字和长图。
+
+主视觉最多尝试三次；三次都失败后生成确定性品牌背景，图上如实标注 `AI 主视觉暂不可用`，详细正文仍可投递。如果最终合成失败，文字和图片都不发送，最终报告与视觉账本保留供恢复；只有微信明确拒绝才在次数上限内重试，响应丢失则记为 `indeterminate` 且永不自动重放。
+
+图片在微信发送之前已完成渲染，因此它只能声明 `报告图：已生成`，不得声明自己未来的微信投递已经成功。真实投递结果只由图片之外的私有 delivery ledger 确认。
+
+紧急回滚无需更换代码或破坏新账本：只将 `config/report-visual.yaml` 中的 `mode: editorial` 改为 `mode: legacy`，再重新加载同一份 schema-compatible Observer 构建。legacy 模式仍会分配期号，但跳过 Image 2 并使用旧报告卡渲染器。保留所有最终报告、期号、视觉账本和不确定投递记录，不要重置状态或自动补发。
 
 ## 数据源与降级
 
@@ -198,6 +239,8 @@ PATH=/opt/homebrew/opt/node@22/bin:/usr/bin:/bin \
 ./scripts/run-scheduled.sh
 ```
 
+该脚本现在由 Observer 启动受审计的 `daily-tech-digest` 任务：日报投递完成后，再发送对应的文字运行报告和 PNG 卡片。如果上次 Observer 在任务运行期间被主机或进程中断，`interrupted` 报告只会在下一次 Observer 成功启动并完成恢复检查后上报。投递状态为 `indeterminate` 时永不自动重放，必须由运维人员核查，避免向微信重复发送。
+
 新环境默认不会自动加载 LaunchAgent。安装脚本必须收到显式确认参数，否则退出且不改动 LaunchAgent：
 
 ```sh
@@ -211,7 +254,7 @@ PATH=/opt/homebrew/opt/node@22/bin:/usr/bin:/bin \
 ./scripts/health-check.sh
 ```
 
-卸载只停止任务并删除用户 `LaunchAgents` 中这一份精确 plist，不删除项目、日报、日志或微信状态：
+要停用已存在的 LaunchAgent，使用专用卸载脚本。它只停止任务并删除用户 `LaunchAgents` 中这一份精确 plist，不删除项目、日报、日志或微信状态：
 
 ```sh
 ./scripts/uninstall-launchd.sh

@@ -17,8 +17,10 @@ import {
   WechatLoginExpiredError,
   WechatDeliveryIndeterminateError,
   WechatDeliveryRejectedError,
+  WechatMediaPreparationError,
   WechatPartialDeliveryError,
   initializeWechat,
+  prepareWechatImageSender,
   sendWechatText,
   publicWechatError,
   splitWechatText,
@@ -47,6 +49,42 @@ function jsonResponse(value: unknown, status = 200): Response {
     status,
     headers: { "content-type": "application/json" },
   });
+}
+
+function reportPng(): Buffer {
+  const crc32 = (bytes: Uint8Array): number => {
+    let crc = 0xffff_ffff;
+    for (const byte of bytes) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit += 1) {
+        crc = (crc >>> 1) ^ (crc & 1 ? 0xedb8_8320 : 0);
+      }
+    }
+    return (crc ^ 0xffff_ffff) >>> 0;
+  };
+  const chunk = (type: string, data = Buffer.alloc(0)): Buffer => {
+    const typeBytes = Buffer.from(type, "ascii");
+    const value = Buffer.alloc(12 + data.length);
+    value.writeUInt32BE(data.length, 0);
+    typeBytes.copy(value, 4);
+    data.copy(value, 8);
+    value.writeUInt32BE(
+      crc32(Buffer.concat([typeBytes, data])),
+      8 + data.length,
+    );
+    return value;
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1_080, 0);
+  ihdr.writeUInt32BE(1_440, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  return Buffer.concat([
+    Buffer.from("89504e470d0a1a0a", "hex"),
+    chunk("IHDR", ihdr),
+    chunk("IDAT"),
+    chunk("IEND"),
+  ]);
 }
 
 function adapter(
@@ -522,6 +560,93 @@ describe("WeChat proactive send", () => {
     }
   });
 
+  it("returns an image closure that keeps the already-validated owner session", async () => {
+    const root = project();
+    const enroll = adapter([
+      jsonResponse({
+        ret: 0,
+        get_updates_buf: "cursor",
+        msgs: [
+          {
+            message_id: 31,
+            create_time_ms: ENROLLMENT_TIME.getTime() + 3_100,
+            from_user_id: "user-self",
+            message_type: 1,
+            context_token: "owner-context-token",
+            item_list: [{ type: 1, text_item: { text: "初始化" } }],
+          },
+        ],
+      }),
+    ]);
+    await initializeWechat({
+      projectRoot: root,
+      vendor: enroll,
+      renderQr: () => undefined,
+      deadlineMs: 10_000,
+      now: () => ENROLLMENT_TIME,
+    });
+    const sender = adapter([
+      jsonResponse({ ret: 0, upload_param: "upload-param" }),
+      new Response(null, {
+        status: 200,
+        headers: { "x-encrypted-param": "download-param" },
+      }),
+      jsonResponse({ ret: 0 }),
+    ]);
+    const prepared = await prepareWechatImageSender({
+      projectRoot: root,
+      vendor: sender,
+      randomBytes: () => Buffer.alloc(16, 0x44),
+      clientId: () => "image-client-id",
+    });
+    const stateDir = join(root, ".state", "wechat");
+    writeFileSync(
+      join(stateDir, "credentials.json"),
+      `${JSON.stringify({
+        ...credentials,
+        botToken: "replacement-fixture-value",
+        ilinkUserId: "replacement-user",
+      })}\n`,
+    );
+    writeFileSync(
+      join(stateDir, "context.json"),
+      `${JSON.stringify({
+        version: 1,
+        status: "ready",
+        userId: "replacement-user",
+        contextToken: "replacement-context",
+        capturedAt: ENROLLMENT_TIME.toISOString(),
+        initializationMessageId: 31,
+        initializationCreateTimeMs: ENROLLMENT_TIME.getTime() + 3_100,
+        seenInitializationMessageIds: [31],
+      })}\n`,
+    );
+    const reportDirectory = join(
+      root,
+      "output",
+      "run-reports",
+      "2026-07-20",
+    );
+    mkdirSync(reportDirectory, { recursive: true });
+    const imagePath = join(
+      reportDirectory,
+      "018f47a8-72df-7d5e-8c1f-96eacc20f2c3.png",
+    );
+    writeFileSync(imagePath, reportPng());
+
+    await expect(prepared(imagePath)).resolves.toEqual({ status: "sent" });
+
+    expect(sender.requests).toHaveLength(3);
+    const uploadBody = JSON.parse(String(sender.requests[0]?.init?.body));
+    const sendBody = JSON.parse(String(sender.requests[2]?.init?.body));
+    expect(uploadBody.to_user_id).toBe("user-self");
+    expect(sendBody.msg.to_user_id).toBe("user-self");
+    expect(sendBody.msg.context_token).toBe("owner-context-token");
+    expect(sender.requests[2]?.init?.headers).toMatchObject({
+      Authorization: "Bearer test-only-bot-token",
+    });
+  });
+
   it("refuses insecure or tampered owner binding before any network call", async () => {
     const root = project();
     const enroll = adapter([
@@ -704,5 +829,11 @@ describe("WeChat proactive send", () => {
     ).rejects.toBeInstanceOf(WechatDeliveryIndeterminateError);
     expect(sender.requests).toHaveLength(1);
     expect(sender.requests[0]?.init).toMatchObject({ retries: 0 });
+  });
+
+  it("publishes only the fixed media preparation error", () => {
+    expect(publicWechatError(new WechatMediaPreparationError())).toBe(
+      "微信报告图片准备失败，未尝试发送图片消息",
+    );
   });
 });

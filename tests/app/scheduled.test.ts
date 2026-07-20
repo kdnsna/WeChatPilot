@@ -8,6 +8,9 @@ import {
   WechatDeliveryRejectedError,
 } from "../../src/delivery/wechat.js";
 import { deliverDailyDigest } from "../../src/delivery/digest-delivery.js";
+import { validEditorial } from "../helpers/editorial.js";
+
+const editorialUrls = ["https://one.test/a", "https://two.test/b"];
 
 const historyItems = [
   {
@@ -72,7 +75,11 @@ describe("scheduled digest job", () => {
         output: {
           date: "2026-07-19",
           digest: "《科技与灵感日报》\n" + "正文".repeat(1_200),
+          sourceUrls: editorialUrls,
+          editorial: validEditorial(editorialUrls),
         },
+        candidateCount: 42,
+        sourceCategoryCount: 4,
       });
     const preparedSender = vi.fn(async () => ({
       status: "sent" as const,
@@ -104,6 +111,10 @@ describe("scheduled digest job", () => {
       chunks: 2,
       jobAttempt: 3,
       deliveryAttempt: 1,
+      editorial: expect.objectContaining({
+        kind: "digest",
+        highlights: [expect.objectContaining({ sourceCount: 2 })],
+      }),
     });
     expect(generateDigest).toHaveBeenCalledTimes(3);
     expect(prepareSender).toHaveBeenCalledTimes(1);
@@ -148,6 +159,7 @@ describe("scheduled digest job", () => {
       status: "sent",
       jobAttempt: 3,
       deliveryAttempt: 3,
+      editorial: { kind: "status" },
     });
     expect(generateDigest).toHaveBeenCalledOnce();
     expect(prepareSender).toHaveBeenCalledOnce();
@@ -172,6 +184,7 @@ describe("scheduled digest job", () => {
     await expect(
       runScheduledDigest({
         projectRoot: project(),
+        now: new Date("2026-07-19T00:00:00.000Z"),
         dependencies: {
           generateDigest,
           prepareSender: vi.fn(async () => vi.fn()),
@@ -199,6 +212,7 @@ describe("scheduled digest job", () => {
 
     await runScheduledDigest({
       projectRoot: project(),
+      now: new Date("2026-07-19T00:00:00.000Z"),
       dependencies: {
         generateDigest: vi.fn(async () => ({
           status: "generated" as const,

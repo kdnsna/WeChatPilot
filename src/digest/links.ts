@@ -522,6 +522,15 @@ async function repairAccessibleDigestLinks(
     sourceUrls: output.sourceUrls.map(
       (url) => replacements.get(url) ?? url,
     ),
+    editorial: {
+      ...output.editorial,
+      highlights: output.editorial.highlights.map((highlight) => ({
+        ...highlight,
+        sourceUrls: highlight.sourceUrls.map(
+          (url) => replacements.get(url) ?? url,
+        ),
+      })),
+    },
   };
   if (
     repaired.sourceUrls.length !== REQUIRED_SOURCE_URLS ||

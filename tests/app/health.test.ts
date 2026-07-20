@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   EXPECTED_VENDOR_HEAD,
@@ -11,11 +11,40 @@ import {
   type HealthProbes,
   type ProjectHealthReport,
 } from "../../src/app/health.js";
+import {
+  deliverRunReport,
+  inspectRunDeliveryState,
+} from "../../src/delivery/run-report-delivery.js";
+import type { RunReport } from "../../src/observer/run-report.js";
 import { runHealthCli } from "../../src/cli/health.js";
+import type { ObserverConfig } from "../../src/observer/config.js";
+import {
+  inspectRunState,
+  listFinalRunReports,
+} from "../../src/observer/run-state.js";
 
 const roots: string[] = [];
 const NODE_EXECUTABLE = "/approved/node-22";
 const CODEX_ENTRYPOINT = "/approved/codex.js";
+
+const OBSERVER_CONFIG: ObserverConfig = {
+  version: 1,
+  jobs: [
+    {
+      id: "daily-tech-digest",
+      name: "每日科技情报",
+      projectLabel: "WeChatPilot",
+      executable: "/opt/homebrew/opt/node@22/bin/node",
+      entrypoint: "dist/src/cli/scheduled.js",
+      arguments: ["--project-root", "{projectRoot}"],
+      workingDirectory: ".",
+      timeoutMs: 1_000,
+      resultAdapter: "scheduled-digest-json-v1",
+      allowedArtifactRoot: "output",
+      notify: "always",
+    },
+  ],
+};
 
 function project(): string {
   const root = mkdtempSync(join(tmpdir(), "digest-health-"));
@@ -50,6 +79,22 @@ function healthyProbes(
       credentialsReady: false,
       ownerBound: false,
       contextReady: false,
+    }),
+    loadObserverConfig: () => OBSERVER_CONFIG,
+    rendererReady: () => true,
+    loadEditorialConfig: () => ({
+      codex: { version: "0.144.4" },
+      style: { version: "editorial-v1" },
+    }) as never,
+    imageCapabilityReady: () => true,
+    inspectReportSequence: () => true,
+    inspectReportVisuals: () => ({ pending: 0, fallback: 0, invalid: 0 }),
+    inspectRunState: () => ({ recoveryPending: 0, invalidRecords: 0 }),
+    listFinalRunReports: () => [],
+    inspectRunDeliveryState: () => ({
+      pending: 0,
+      indeterminate: 0,
+      invalid: 0,
     }),
     ...overrides,
   };
@@ -136,6 +181,21 @@ describe("project health", () => {
         ownerBound: false,
         contextReady: false,
       },
+      observer: {
+        status: "ok",
+        configValid: true,
+        rendererReady: true,
+        imageConfigValid: true,
+        imageCapabilityReady: true,
+        sequenceLedgerValid: true,
+        pendingVisuals: 0,
+        fallbackVisuals: 0,
+        invalidVisualRecords: 0,
+        pendingRecoveryReports: 0,
+        pendingDeliveries: 0,
+        indeterminateDeliveries: 0,
+        invalidStateRecords: 0,
+      },
       diagnostics: [],
     });
     expect(healthExitCode(report)).toBe(0);
@@ -177,6 +237,41 @@ describe("project health", () => {
     expect(serialized).not.toContain(root);
     expect(serialized).not.toContain(NODE_EXECUTABLE);
     expect(serialized).not.toContain(CODEX_ENTRYPOINT);
+  });
+
+  it("accepts a real clean-checkout .state directory without observer records", () => {
+    const root = project();
+    const state = join(root, ".state");
+    mkdirSync(state, { mode: 0o755 });
+    chmodSync(state, 0o755);
+    writeFileSync(join(state, ".gitkeep"), "", "utf8");
+
+    const report = inspectProjectHealth({
+      projectRoot: root,
+      probes: healthyProbes({ inspectRunState, listFinalRunReports }),
+    });
+
+    expect(report.observer.status).toBe("ok");
+    expect(report.observer.invalidStateRecords).toBe(0);
+    expect(report.requiredReady).toBe(true);
+  });
+
+  it("counts one observer scan failure and skips the duplicate final-report scan", () => {
+    const listFinalRunReports = vi.fn(() => []);
+    const report = inspectProjectHealth({
+      projectRoot: project(),
+      probes: healthyProbes({
+        inspectRunState: () => {
+          throw new Error("unsafe observer state /private/path");
+        },
+        listFinalRunReports,
+      }),
+    });
+
+    expect(listFinalRunReports).not.toHaveBeenCalled();
+    expect(report.observer.status).toBe("failed");
+    expect(report.observer.invalidStateRecords).toBe(1);
+    expect(JSON.stringify(report)).not.toContain("/private/path");
   });
 
   it("returns failed for required checks and a nonzero CLI exit code", () => {
@@ -263,6 +358,257 @@ describe("project health", () => {
     expect(report.requiredReady).toBe(true);
     expect(report.wechat.status).toBe("pending");
     expect(healthExitCode(report)).toBe(0);
+  });
+
+  it("reports only safe observer counts and marks pending work for operator review", () => {
+    const root = project();
+    const secretRunId = "019c7714-3b77-74d1-9866-e1f484aae2ab";
+    const report = inspectProjectHealth({
+      projectRoot: root,
+      probes: healthyProbes({
+        wechatHealth: () => ({
+          credentialsReady: true,
+          ownerBound: true,
+          contextReady: true,
+        }),
+        inspectRunState: () => ({ recoveryPending: 2, invalidRecords: 0 }),
+        listFinalRunReports: () => [
+          {
+            runId: secretRunId,
+          } as never,
+        ],
+        inspectRunDeliveryState: (options) => {
+          expect(options).toHaveProperty("reports");
+          return { pending: 3, indeterminate: 4, invalid: 0 };
+        },
+      }),
+    });
+
+    expect(report.status).toBe("pending");
+    expect(report.requiredReady).toBe(true);
+    expect(report.observer).toEqual({
+      status: "ok",
+      configValid: true,
+      rendererReady: true,
+      imageConfigValid: true,
+      imageCapabilityReady: true,
+      sequenceLedgerValid: true,
+      pendingVisuals: 0,
+      fallbackVisuals: 0,
+      invalidVisualRecords: 0,
+      pendingRecoveryReports: 2,
+      pendingDeliveries: 3,
+      indeterminateDeliveries: 4,
+      invalidStateRecords: 0,
+    });
+    expect(report.diagnostics).toEqual([
+      "observer recovery pending",
+      "observer delivery pending",
+      "observer delivery requires review",
+    ]);
+    const serialized = JSON.stringify(report);
+    expect(serialized).not.toContain(secretRunId);
+    expect(serialized).not.toContain(root);
+    expect(healthExitCode(report)).toBe(0);
+  });
+
+  it("reports safe Image 2 capability and visual ledger diagnostics", () => {
+    const root = project();
+    const secretRunId = "019c7714-3b77-74d1-9866-e1f484aae2ab";
+    const secretIssue = "WP-654321";
+    const secretPrompt = "PRIVATE_IMAGE_PROMPT";
+    const secretPath = "/private/generated/hero.png";
+    const rawFailure = `${secretRunId} ${secretIssue} ${secretPrompt} ${secretPath}`;
+    const report = inspectProjectHealth({
+      projectRoot: root,
+      probes: healthyProbes({
+        wechatHealth: () => ({
+          credentialsReady: true,
+          ownerBound: true,
+          contextReady: true,
+        }),
+        imageCapabilityReady: () => {
+          throw new Error(rawFailure);
+        },
+        inspectReportVisuals: () => ({ pending: 2, fallback: 3, invalid: 1 }),
+      }),
+    });
+
+    expect(report.status).toBe("failed");
+    expect(report.requiredReady).toBe(false);
+    expect(report.observer).toMatchObject({
+      imageConfigValid: true,
+      imageCapabilityReady: false,
+      sequenceLedgerValid: true,
+      pendingVisuals: 2,
+      fallbackVisuals: 3,
+      invalidVisualRecords: 1,
+    });
+    expect(report.diagnostics).toEqual(
+      expect.arrayContaining([
+        "observer image capability unavailable",
+        "observer visual pending",
+        "observer visual state check failed",
+      ]),
+    );
+    const serialized = JSON.stringify(report);
+    for (const secret of [secretRunId, secretIssue, secretPrompt, secretPath, rawFailure]) {
+      expect(serialized).not.toContain(secret);
+    }
+  });
+
+  it("keeps completed fallbacks ready and marks only pending visuals pending", () => {
+    const root = project();
+    const fallbackOnly = inspectProjectHealth({
+      projectRoot: root,
+      probes: healthyProbes({
+        wechatHealth: () => ({
+          credentialsReady: true,
+          ownerBound: true,
+          contextReady: true,
+        }),
+        inspectReportVisuals: () => ({ pending: 0, fallback: 4, invalid: 0 }),
+      }),
+    });
+    expect(fallbackOnly.status).toBe("ready");
+    expect(fallbackOnly.observer.fallbackVisuals).toBe(4);
+
+    const pending = inspectProjectHealth({
+      projectRoot: root,
+      probes: healthyProbes({
+        wechatHealth: () => ({
+          credentialsReady: true,
+          ownerBound: true,
+          contextReady: true,
+        }),
+        inspectReportVisuals: () => ({ pending: 1, fallback: 0, invalid: 0 }),
+      }),
+    });
+    expect(pending.status).toBe("pending");
+    expect(pending.requiredReady).toBe(true);
+    expect(pending.diagnostics).toContain("observer visual pending");
+  });
+
+  it("uses one reports-aware delivery inspection without separate disposition probes", () => {
+    const root = project();
+    const missingRunId = "018f514c-1a2b-7abc-8def-1234567890ac";
+    const retryableRunId = "018f514c-1a2b-7abc-8def-1234567890ad";
+    const indeterminateRunId = "018f514c-1a2b-7abc-8def-1234567890ae";
+    const reports = [missingRunId, retryableRunId, indeterminateRunId].map(
+      (runId) => ({ runId }) as never,
+    );
+    const inspectDelivery = vi.fn((options: { reports?: readonly { runId: string }[] }) => {
+      expect(options.reports).toEqual(reports);
+      return { pending: 3, indeterminate: 2, invalid: 1 };
+    });
+
+    const report = inspectProjectHealth({
+      projectRoot: root,
+      probes: healthyProbes({
+        wechatHealth: () => ({
+          credentialsReady: true,
+          ownerBound: true,
+          contextReady: true,
+        }),
+        listFinalRunReports: () => reports,
+        inspectRunDeliveryState: inspectDelivery,
+      }),
+    });
+
+    expect(inspectDelivery).toHaveBeenCalledOnce();
+    expect(report.observer).toMatchObject({
+      pendingDeliveries: 3,
+      indeterminateDeliveries: 2,
+      invalidStateRecords: 1,
+    });
+    expect(JSON.stringify(report)).not.toContain(missingRunId);
+    expect(JSON.stringify(report)).not.toContain(retryableRunId);
+    expect(JSON.stringify(report)).not.toContain(indeterminateRunId);
+  });
+
+  it("fails health for a real final-report ledger hash mismatch", async () => {
+    const root = project();
+    const original: RunReport = {
+      version: 1,
+      runId: "99999999-9999-4999-8999-999999999996",
+      taskId: "daily-tech-digest",
+      taskName: "每日科技情报",
+      projectLabel: "WeChatPilot",
+      status: "success",
+      startedAt: "2026-07-20T00:00:00.000Z",
+      finishedAt: "2026-07-20T00:00:01.000Z",
+      durationMs: 1_000,
+      summary: ["原报告"],
+      metrics: [],
+      failure: null,
+      artifacts: [],
+    };
+    await deliverRunReport({
+      projectRoot: root,
+      report: original,
+      sendText: async () => ({ status: "sent", chunks: 1 }),
+      sendImage: async () => ({ status: "sent" }),
+    });
+    const changed = { ...original, summary: ["不同的最终报告"] };
+
+    const result = inspectProjectHealth({
+      projectRoot: root,
+      probes: healthyProbes({
+        wechatHealth: () => ({
+          credentialsReady: true,
+          ownerBound: true,
+          contextReady: true,
+        }),
+        listFinalRunReports: () => [changed],
+        inspectRunDeliveryState,
+      }),
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.observer.invalidStateRecords).toBeGreaterThan(0);
+    expect(result.diagnostics).toContain("observer state check failed");
+  });
+
+  it.each([
+    {
+      name: "missing observer configuration",
+      override: {
+        loadObserverConfig: () => {
+          throw new Error("missing /private/config/observer-jobs.yaml");
+        },
+      },
+      expected: { configValid: false, rendererReady: true, invalidStateRecords: 0 },
+    },
+    {
+      name: "unavailable report renderer",
+      override: { rendererReady: () => false },
+      expected: { configValid: true, rendererReady: false, invalidStateRecords: 0 },
+    },
+    {
+      name: "invalid observer state records",
+      override: {
+        inspectRunState: () => ({ recoveryPending: 0, invalidRecords: 2 }),
+        inspectRunDeliveryState: () => ({ pending: 0, indeterminate: 0, invalid: 3 }),
+      },
+      expected: { configValid: true, rendererReady: true, invalidStateRecords: 5 },
+    },
+  ])("fails required readiness for $name", ({ override, expected }) => {
+    const report = inspectProjectHealth({
+      projectRoot: project(),
+      probes: healthyProbes({
+        wechatHealth: () => ({
+          credentialsReady: true,
+          ownerBound: true,
+          contextReady: true,
+        }),
+        ...override,
+      }),
+    });
+
+    expect(report.status).toBe("failed");
+    expect(report.requiredReady).toBe(false);
+    expect(report.observer).toMatchObject({ status: "failed", ...expected });
+    expect(healthExitCode(report)).toBe(1);
   });
 
   it("writes pending health to stdout and required failures to stderr", () => {

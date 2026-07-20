@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { DigestEditorialSchema } from "../report/editorial.js";
+
 const DigestOutputSchema = z
   .object({
     title: z.string().min(16).max(40),
@@ -16,6 +18,7 @@ const DigestOutputSchema = z
       .min(13)
       .max(24)
       .refine((values) => new Set(values).size === values.length),
+    editorial: DigestEditorialSchema,
   })
   .strict();
 
@@ -109,6 +112,13 @@ function validateUrls(
     const url = rawUrl.replace(/[，。；：！？、]+$/gu, "");
     if (!output.sourceUrls.includes(url)) {
       throw new DigestValidationError("Digest contains an unlisted source URL");
+    }
+  }
+  for (const highlight of output.editorial.highlights) {
+    for (const url of highlight.sourceUrls) {
+      if (!allowed.has(url) || !output.sourceUrls.includes(url)) {
+        throw new DigestValidationError("Digest editorial source URL is invalid");
+      }
     }
   }
 }

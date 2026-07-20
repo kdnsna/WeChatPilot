@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { validEditorialPayload } from "../helpers/editorial.js";
 
 const roots: string[] = [];
 
@@ -45,6 +46,7 @@ describe("scheduled CLI", () => {
             chunks: 2,
             jobAttempt: 1,
             deliveryAttempt: 1,
+            editorial: validEditorialPayload(undefined, "2026-07-19"),
           })),
         },
       ),
@@ -58,6 +60,7 @@ describe("scheduled CLI", () => {
       chunks: 2,
       jobAttempt: 1,
       deliveryAttempt: 1,
+      editorial: validEditorialPayload(undefined, "2026-07-19"),
     });
   });
 

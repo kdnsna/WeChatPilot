@@ -13,6 +13,12 @@ import {
   type SentHistoryReference,
 } from "../history/store.js";
 import { shanghaiDateKey } from "../lib/time.js";
+import {
+  buildStatusEditorialReport,
+  toEditorialReportPayload,
+  type DigestEditorial,
+  type EditorialReportPayload,
+} from "../report/editorial.js";
 import { runDailyDigest } from "./digest.js";
 
 const MAX_JOB_ATTEMPTS = 3;
@@ -28,7 +34,11 @@ interface GeneratedDigest {
   readonly output: {
     readonly date: string;
     readonly digest: string;
+    readonly sourceUrls?: readonly string[];
+    readonly editorial?: DigestEditorial;
   };
+  readonly candidateCount?: number;
+  readonly sourceCategoryCount?: number;
 }
 
 interface ScheduledDependencies {
@@ -68,7 +78,12 @@ const defaultDependencies: ScheduledDependencies = {
     if (result.status !== "generated") {
       throw new Error("scheduled digest unexpectedly returned a dry run");
     }
-    return result;
+    return {
+      ...result,
+      sourceCategoryCount: new Set(
+        result.collection.ranked.map((candidate) => candidate.item.category),
+      ).size,
+    };
   },
   prepareSender: async ({ projectRoot }) =>
     await prepareWechatTextSender({ projectRoot }),
@@ -98,6 +113,7 @@ export type ScheduledDigestResult =
       readonly chunks: number;
       readonly jobAttempt: number;
       readonly deliveryAttempt: number;
+      readonly editorial: EditorialReportPayload;
     }
   | {
       readonly status: "already-sent";
@@ -165,6 +181,19 @@ export async function runScheduledDigest(
         chunks: delivery.chunks,
         jobAttempt,
         deliveryAttempt: delivery.attempt,
+        editorial:
+          generated.output.editorial !== undefined &&
+          generated.output.sourceUrls !== undefined
+            ? toEditorialReportPayload(generated.output.editorial, {
+                allowedUrls: generated.output.sourceUrls,
+                candidateCount: generated.candidateCount ?? 0,
+                sourceCategoryCount: generated.sourceCategoryCount ?? 0,
+                scheduledDate: generated.output.date,
+              })
+            : buildStatusEditorialReport({
+                reason: "failed",
+                date: generated.output.date,
+              }),
       };
     } catch (error) {
       if (error instanceof DailyDigestAlreadySentError && generated !== undefined) {
