@@ -6,6 +6,7 @@ import {
   sanitizeEditorialReportPayload,
 } from "../report/editorial.js";
 import { shanghaiDateKey } from "../lib/time.js";
+import type { ReportIssue } from "./report-sequence.js";
 
 import {
   RunStatusSchema,
@@ -137,6 +138,8 @@ export const RunReportSchema = z
       .array(ProjectRelativeArtifactPathSchema)
       .max(ARTIFACT_MAXIMUM),
     editorial: EditorialReportPayloadSchema.optional(),
+    issueNumber: z.number().int().positive().max(999_999).optional(),
+    issueLabel: z.string().regex(/^WP-\d{6}$/u).optional(),
   })
   .strict()
   .superRefine((report, context) => {
@@ -156,6 +159,14 @@ export const RunReportSchema = z
         message: "durationMs must match the authority timestamps",
       });
     }
+    if ((report.issueNumber === undefined) !== (report.issueLabel === undefined)) {
+      context.addIssue({ code: "custom", path: ["issueLabel"], message: "issue fields must appear together" });
+    } else if (
+      report.issueNumber !== undefined &&
+      report.issueLabel !== `WP-${String(report.issueNumber).padStart(6, "0")}`
+    ) {
+      context.addIssue({ code: "custom", path: ["issueLabel"], message: "issue label must match issue number" });
+    }
   });
 
 export type RunReportDraft = z.infer<typeof RunReportDraftSchema>;
@@ -166,6 +177,25 @@ export interface BuildRunReportOptions {
   readonly authority: RunAuthority;
   readonly projectRoot: string;
   readonly draft: unknown | null;
+}
+
+export function attachIssue(report: RunReport, issue: ReportIssue): RunReport {
+  const parsed = RunReportSchema.parse(report);
+  const expected = `WP-${String(issue.number).padStart(6, "0")}`;
+  if (issue.label !== expected) {
+    throw new Error("Invalid report issue assignment");
+  }
+  if (parsed.issueNumber !== undefined || parsed.issueLabel !== undefined) {
+    if (parsed.issueNumber === issue.number && parsed.issueLabel === issue.label) {
+      return parsed;
+    }
+    throw new Error("Conflicting report issue assignment");
+  }
+  return RunReportSchema.parse({
+    ...parsed,
+    issueNumber: issue.number,
+    issueLabel: issue.label,
+  });
 }
 
 const MINIMAL_SUMMARY = "任务已完成，未提供结构化业务摘要";

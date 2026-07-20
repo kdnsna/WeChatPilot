@@ -30,6 +30,7 @@ const SAFE_ERROR_MESSAGE = "Invalid observer task lock";
 const TaskIdSchema = z.union([
   ObserverJobSchema.shape.id,
   z.literal("codex-wechat-observer-test"),
+  z.literal("report-sequence"),
 ]);
 const PositivePidSchema = z.number().int().positive().safe();
 const LockRecordSchema = z

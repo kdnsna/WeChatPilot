@@ -7,6 +7,7 @@ import {
 import {
   RunReportDraftSchema,
   RunReportSchema,
+  attachIssue,
   buildRunReport,
 } from "../../src/observer/run-report.js";
 import { validEditorialPayload } from "../helpers/editorial.js";
@@ -397,6 +398,19 @@ describe("sanitizeReportText", () => {
 });
 
 describe("buildRunReport", () => {
+  it("attaches one matching issue and refuses conflicting reassignment", () => {
+    const report = buildRunReport({ authority, projectRoot: "/tmp/project", draft: null });
+    const numbered = attachIssue(report, { number: 127, label: "WP-000127" });
+    expect(numbered).toMatchObject({ issueNumber: 127, issueLabel: "WP-000127" });
+    expect(attachIssue(numbered, { number: 127, label: "WP-000127" })).toEqual(numbered);
+    expect(() =>
+      attachIssue(numbered, { number: 128, label: "WP-000128" }),
+    ).toThrow(/issue/i);
+    expect(
+      RunReportSchema.safeParse({ ...report, issueNumber: 1 }).success,
+    ).toBe(false);
+  });
+
   it("preserves a sanitized editorial payload and replaces an invalid one with status", () => {
     const trusted = validEditorialPayload(undefined, "2026-07-19");
     const report = buildRunReport({
