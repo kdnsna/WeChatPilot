@@ -9,6 +9,7 @@ import {
   RunReportSchema,
   buildRunReport,
 } from "../../src/observer/run-report.js";
+import { validEditorialPayload } from "../helpers/editorial.js";
 
 const authority = {
   runId: "11111111-1111-4111-8111-111111111111",
@@ -396,6 +397,43 @@ describe("sanitizeReportText", () => {
 });
 
 describe("buildRunReport", () => {
+  it("preserves a sanitized editorial payload and replaces an invalid one with status", () => {
+    const trusted = validEditorialPayload(undefined, "2026-07-19");
+    const report = buildRunReport({
+      authority,
+      projectRoot: "/Users/example/private-project",
+      draft: {
+        version: 1,
+        summary: ["完成"],
+        metrics: [],
+        failure: null,
+        artifacts: [],
+        editorial: trusted,
+      },
+    });
+    expect(report.editorial).toEqual(trusted);
+
+    const fallback = buildRunReport({
+      authority,
+      projectRoot: "/Users/example/private-project",
+      draft: {
+        version: 1,
+        summary: ["失败"],
+        metrics: [],
+        failure: null,
+        artifacts: [],
+        editorial: { private: "https://secret.test/value" },
+      },
+    });
+    expect(fallback.editorial).toMatchObject({
+      kind: "status",
+      highlights: [],
+      actions: [],
+      audit: { scheduledDate: "2026-07-19" },
+    });
+    expect(JSON.stringify(fallback)).not.toContain("secret.test");
+  });
+
   it("preserves trusted authority and emits a schema-valid sanitized report", () => {
     const report = buildRunReport({
       authority,

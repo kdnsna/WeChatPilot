@@ -1,4 +1,8 @@
 import type { DigestEditorial } from "../../src/report/editorial.js";
+import {
+  toEditorialReportPayload,
+  type EditorialReportPayload,
+} from "../../src/report/editorial.js";
 
 export function validEditorial(urls: readonly string[]): DigestEditorial {
   const sources = urls.slice(0, Math.min(2, urls.length));
@@ -23,4 +27,16 @@ export function validEditorial(urls: readonly string[]): DigestEditorial {
       "评估下一项适合交给 Codex 的安全自动化流程",
     ],
   };
+}
+
+export function validEditorialPayload(
+  urls: readonly string[] = ["https://one.test/a", "https://two.test/b"],
+  date = "2026-07-20",
+): EditorialReportPayload {
+  return toEditorialReportPayload(validEditorial(urls), {
+    allowedUrls: urls,
+    candidateCount: 42,
+    sourceCategoryCount: 4,
+    scheduledDate: date,
+  });
 }

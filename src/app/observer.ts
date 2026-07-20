@@ -53,6 +53,8 @@ import {
   type AcquireObserverTaskLockOptions,
   type ObserverTaskLock,
 } from "../observer/task-lock.js";
+import { buildStatusEditorialReport } from "../report/editorial.js";
+import { shanghaiDateKey } from "../lib/time.js";
 
 const RECOVERY_SUMMARY = "任务因主机或进程中断，已在恢复后补记";
 const RENDER_FAILURE_CODE = "OBSERVER_REPORT_RENDER_FAILED";
@@ -173,13 +175,17 @@ function resolvedDependencies(
   };
 }
 
-function recoveryDraft(): RunReportDraft {
+function recoveryDraft(authority: RunAuthority): RunReportDraft {
   return {
     version: 1,
     summary: [RECOVERY_SUMMARY],
     metrics: [],
     failure: null,
     artifacts: [],
+    editorial: buildStatusEditorialReport({
+      reason: "interrupted",
+      date: shanghaiDateKey(new Date(authority.finishedAt)),
+    }),
   };
 }
 
@@ -241,7 +247,7 @@ function recoveredReport(
   const report = dependencies.normalize({
     authority,
     projectRoot: options.projectRoot,
-    draft: recoveryDraft(),
+    draft: recoveryDraft(authority),
   });
   dependencies.finishRecord(options.projectRoot, report);
   return report;

@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+import {
+  EditorialReportPayloadSchema,
+  buildStatusEditorialReport,
+} from "../report/editorial.js";
+
 import { type RunReportDraft, RunReportDraftSchema } from "./run-report.js";
 
 const MAXIMUM_STDOUT_BYTES = 64 * 1024;
@@ -30,6 +35,7 @@ const SentResultSchema = z
     chunks: PositiveSafeIntegerSchema,
     jobAttempt: PositiveSafeIntegerSchema,
     deliveryAttempt: PositiveSafeIntegerSchema,
+    editorial: EditorialReportPayloadSchema,
   })
   .strict();
 
@@ -70,6 +76,7 @@ function safeError(): Error {
 function draft(
   summary: string,
   metrics: ReadonlyArray<{ readonly label: string; readonly value: string }>,
+  editorial?: z.infer<typeof EditorialReportPayloadSchema>,
 ): RunReportDraft {
   return RunReportDraftSchema.parse({
     version: 1,
@@ -77,6 +84,7 @@ function draft(
     metrics,
     failure: null,
     artifacts: [],
+    ...(editorial === undefined ? {} : { editorial }),
   });
 }
 
@@ -111,7 +119,7 @@ export function parseScheduledDigestResult(stdout: string): JobAdapterResult {
           { label: "消息分段", value: String(result.chunks) },
           { label: "任务尝试", value: String(result.jobAttempt) },
           { label: "发送尝试", value: String(result.deliveryAttempt) },
-        ]),
+        ], result.editorial),
       };
     }
     if (result.status === "already-sent") {
@@ -120,12 +128,12 @@ export function parseScheduledDigestResult(stdout: string): JobAdapterResult {
         draft: draft("今日日报已发送，本次跳过", [
           dateMetric,
           { label: "任务尝试", value: String(result.jobAttempt) },
-        ]),
+        ], buildStatusEditorialReport({ reason: "already-sent", date: result.date })),
       };
     }
     return {
       statusOverride: "skipped",
-      draft: draft("尚未到每日发送时间，本次跳过", [dateMetric]),
+      draft: draft("尚未到每日发送时间，本次跳过", [dateMetric], buildStatusEditorialReport({ reason: "not-due", date: result.date })),
     };
   } catch {
     throw safeError();

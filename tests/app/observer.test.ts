@@ -184,12 +184,18 @@ describe("observer orchestration", () => {
         if (options.authority.runId === CURRENT_ID) {
           calls.push("normalize");
         } else {
-          expect(options.draft).toEqual({
+          expect(options.draft).toMatchObject({
             version: 1,
             summary: ["任务因主机或进程中断，已在恢复后补记"],
             metrics: [],
             failure: null,
             artifacts: [],
+            editorial: {
+              kind: "status",
+              highlights: [],
+              actions: [],
+              audit: { scheduledDate: "2026-07-20" },
+            },
           });
         }
         return report(

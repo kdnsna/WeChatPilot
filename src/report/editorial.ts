@@ -90,16 +90,39 @@ export interface EditorialPayloadOptions {
   readonly scheduledDate: string;
 }
 
-function safeText(value: string, maximumCharacters: number): string {
+function safeText(
+  value: string,
+  maximumCharacters: number,
+  projectRoot = "",
+): string {
   const withoutUrls = value.replace(/https?:\/\/[^\s<>"']+/giu, "");
   const sanitized = sanitizeReportText(withoutUrls, {
-    projectRoot: "",
+    projectRoot,
     maximumCharacters,
   });
   if (sanitized === null) {
     throw new Error("Editorial text sanitization failed");
   }
   return sanitized;
+}
+
+export function sanitizeEditorialReportPayload(
+  input: unknown,
+  projectRoot: string,
+): EditorialReportPayload {
+  const payload = EditorialReportPayloadSchema.parse(input);
+  return EditorialReportPayloadSchema.parse({
+    ...payload,
+    executiveSummary: safeText(payload.executiveSummary, 280, projectRoot),
+    highlights: payload.highlights.map((highlight) => ({
+      ...highlight,
+      title: safeText(highlight.title, 80, projectRoot),
+      whyItMatters: safeText(highlight.whyItMatters, 240, projectRoot),
+    })),
+    actions: payload.actions.map((action) =>
+      safeText(action, 120, projectRoot),
+    ),
+  });
 }
 
 function confidence(sourceCount: number): "high" | "medium-high" | "medium" {
@@ -141,5 +164,26 @@ export function toEditorialReportPayload(
       sourceCategoryCount: options.sourceCategoryCount,
       scheduledDate: options.scheduledDate,
     },
+  });
+}
+
+export function buildStatusEditorialReport(options: {
+  readonly reason: "not-due" | "already-sent" | "failed" | "interrupted";
+  readonly date: string;
+  readonly nextScheduledAt?: string;
+}): EditorialReportPayload {
+  const descriptions = {
+    "not-due": "尚未到每日情报发送时间，本次只完成调度检查，没有生成新的技术信号或重复推送内容。",
+    "already-sent": "今日情报已经完成发送，幂等记录阻止本次重复生成和重复投递，保留原有发送结果。",
+    failed: "本次情报任务未能完成，系统只记录可审计的失败状态，不会用未核验内容填充或伪造今日信号。",
+    interrupted: "任务因主机或进程中断而结束，恢复流程已补记状态，不自动重放任何可能已发送的内容。",
+  } as const;
+  return EditorialReportPayloadSchema.parse({
+    version: 1,
+    kind: "status",
+    executiveSummary: descriptions[options.reason],
+    highlights: [],
+    actions: [],
+    audit: { scheduledDate: options.date },
   });
 }

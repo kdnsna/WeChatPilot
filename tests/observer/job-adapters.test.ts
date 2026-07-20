@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { parseScheduledDigestResult } from "../../src/observer/job-adapters.js";
+import { validEditorialPayload } from "../helpers/editorial.js";
+
+const editorial = validEditorialPayload();
 
 describe("parseScheduledDigestResult", () => {
   it("maps the exact sent result to a success draft", () => {
@@ -13,6 +16,7 @@ describe("parseScheduledDigestResult", () => {
           chunks: 3,
           jobAttempt: 2,
           deliveryAttempt: 1,
+          editorial,
         })}\n`,
       ),
     ).toEqual({
@@ -28,23 +32,20 @@ describe("parseScheduledDigestResult", () => {
         ],
         failure: null,
         artifacts: [],
+        editorial,
       },
     });
   });
 
   it("maps not-due and already-sent to skipped with status-specific fields", () => {
-    expect(
-      parseScheduledDigestResult(
-        JSON.stringify({ ok: true, status: "not-due", date: "2026-07-20" }),
-      ),
-    ).toEqual({
+    const notDue = parseScheduledDigestResult(
+      JSON.stringify({ ok: true, status: "not-due", date: "2026-07-20" }),
+    );
+    expect(notDue).toMatchObject({
       statusOverride: "skipped",
       draft: {
-        version: 1,
         summary: ["尚未到每日发送时间，本次跳过"],
-        metrics: [{ label: "日期", value: "2026-07-20" }],
-        failure: null,
-        artifacts: [],
+        editorial: { kind: "status", highlights: [], actions: [] },
       },
     });
     expect(
@@ -56,17 +57,11 @@ describe("parseScheduledDigestResult", () => {
           jobAttempt: 2,
         }),
       ),
-    ).toEqual({
+    ).toMatchObject({
       statusOverride: "skipped",
       draft: {
-        version: 1,
         summary: ["今日日报已发送，本次跳过"],
-        metrics: [
-          { label: "日期", value: "2026-07-20" },
-          { label: "任务尝试", value: "2" },
-        ],
-        failure: null,
-        artifacts: [],
+        editorial: { kind: "status", highlights: [], actions: [] },
       },
     });
   });

@@ -1,6 +1,13 @@
 import { z } from "zod";
 
 import {
+  EditorialReportPayloadSchema,
+  buildStatusEditorialReport,
+  sanitizeEditorialReportPayload,
+} from "../report/editorial.js";
+import { shanghaiDateKey } from "../lib/time.js";
+
+import {
   RunStatusSchema,
   sanitizeReportText,
 } from "./report-policy.js";
@@ -95,6 +102,7 @@ export const RunReportDraftSchema = z
     artifacts: z
       .array(ProjectRelativeArtifactPathSchema)
       .max(ARTIFACT_MAXIMUM),
+    editorial: z.unknown().optional(),
   })
   .strict();
 
@@ -128,6 +136,7 @@ export const RunReportSchema = z
     artifacts: z
       .array(ProjectRelativeArtifactPathSchema)
       .max(ARTIFACT_MAXIMUM),
+    editorial: EditorialReportPayloadSchema.optional(),
   })
   .strict()
   .superRefine((report, context) => {
@@ -177,6 +186,7 @@ export function buildRunReport(options: BuildRunReportOptions): RunReport {
   let metrics: Array<{ label: string; value: string }> = [];
   let failure: string | null = null;
   let artifacts: string[] = [];
+  let editorial: z.infer<typeof EditorialReportPayloadSchema> | undefined;
 
   if (parsedDraft.success) {
     const sanitizedSummary = parsedDraft.data.summary.flatMap((value) => {
@@ -226,6 +236,19 @@ export function buildRunReport(options: BuildRunReportOptions): RunReport {
       const parsed = ProjectRelativeArtifactPathSchema.safeParse(sanitized);
       return parsed.success ? [parsed.data] : [];
     });
+    if (parsedDraft.data.editorial !== undefined) {
+      try {
+        editorial = sanitizeEditorialReportPayload(
+          parsedDraft.data.editorial,
+          options.projectRoot,
+        );
+      } catch {
+        editorial = buildStatusEditorialReport({
+          reason: "failed",
+          date: shanghaiDateKey(new Date(authority.finishedAt)),
+        });
+      }
+    }
   }
 
   return RunReportSchema.parse({
@@ -236,5 +259,6 @@ export function buildRunReport(options: BuildRunReportOptions): RunReport {
     metrics,
     failure,
     artifacts,
+    ...(editorial === undefined ? {} : { editorial }),
   });
 }
