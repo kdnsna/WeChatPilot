@@ -11,6 +11,7 @@ import {
   runManagedJob,
   type ManagedJobDependencies,
 } from "../../src/observer/managed-job.js";
+import { validEditorialPayload } from "../helpers/editorial.js";
 
 const job: ObserverJob = {
   id: "daily-tech-digest",
@@ -105,6 +106,7 @@ describe("runManagedJob", () => {
         chunks: 2,
         jobAttempt: 1,
         deliveryAttempt: 1,
+        editorial: validEditorialPayload(),
       });
       return child;
     });
@@ -133,6 +135,7 @@ describe("runManagedJob", () => {
         chunks: 2,
         jobAttempt: 1,
         deliveryAttempt: 1,
+        editorial: validEditorialPayload(),
       });
       return child;
     });
