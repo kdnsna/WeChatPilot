@@ -310,6 +310,7 @@ describe("observer run-state journal", () => {
       projectRoot,
       now: () => new Date("2026-07-19T01:05:00.000Z"),
       isProcessAlive: (pid) => pid === 101 || pid === 202 || pid === 302,
+      processIdentity: identity,
     });
 
     expect(result).toEqual({
