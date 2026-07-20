@@ -70,7 +70,7 @@ describe("loadConfig", () => {
     expect(schema).toMatchObject({
       type: "object",
       additionalProperties: false,
-      required: ["title", "date", "digest", "sourceUrls"],
+      required: ["title", "date", "digest", "sourceUrls", "editorial"],
     });
   });
 

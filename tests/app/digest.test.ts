@@ -14,6 +14,7 @@ import { runDailyDigest } from "../../src/app/digest.js";
 import type { RegisteredCollector } from "../../src/collectors/run.js";
 import type { HttpClient } from "../../src/lib/http.js";
 import { Category, type NormalizedItem } from "../../src/types/item.js";
+import { validEditorial } from "../helpers/editorial.js";
 
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 const NOW = new Date("2026-07-18T06:00:00.000Z");
@@ -199,6 +200,7 @@ describe("runDailyDigest", () => {
         date: "2026-07-18",
         digest: generatedDigest(primaryUrls),
         sourceUrls: primaryUrls,
+        editorial: validEditorial(primaryUrls),
       }),
     );
     const linkProbe = vi.fn(

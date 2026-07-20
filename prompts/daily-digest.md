@@ -35,6 +35,10 @@
 - `date`：北京时间日期，格式 `YYYY-MM-DD`。
 - `digest`：完整可直接发送微信的日报正文；五个栏目依次出现；前四栏分别用 `【1】` 开始编号，条数严格为 3、5、3、2。
 - `sourceUrls`：正文实际使用的原始链接，去重后列出；每个链接必须来自候选数据，且必须在 digest 中逐字出现。不得用搜索结果 URL 替换候选原始链接。
+- `editorial`：用于生成编辑部情报长图的结构化数据，必须包含：
+  - `executiveSummary`：80-140 个 Unicode 字符，概括今日最重要的变化。
+  - `highlights`：目标 5 条，证据不足时可少于 5 条但不得编造。每条的 `title` 为 8-36 字符，`whyItMatters` 为 40-100 字符，`sourceUrls` 为 1-6 个已在顶层 `sourceUrls` 中的去重 URL，`impact` 只能为 `high` / `medium-high` / `medium` / `exploratory`。
+  - `actions`：严格 3 条可在本周验证、持续跟踪或安全交给 Codex 的具体行动，每条 12-80 字符。
 
 当候选的主链接或原始链接不可访问或受阻时，仅允许把同一 Hacker News 候选中严格匹配 `https://news.ycombinator.com/item?id=<hnId>` 的 `discussionUrl` 作为备用回退链接；替换时必须同步更新 `digest` 和 `sourceUrls`，不得引入与该候选无关的链接。
 

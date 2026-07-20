@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { DigestCandidate } from "../../src/digest/candidates.js";
 import type { DigestOutput } from "../../src/digest/validate.js";
+import { validEditorial } from "../helpers/editorial.js";
 
 const roots: string[] = [];
 
@@ -50,6 +51,9 @@ describe("digest history manifest", () => {
       date: "2026-07-19",
       digest: "日报正文与来源链接",
       sourceUrls: ["https://news.ycombinator.com/item?id=42"],
+      editorial: validEditorial([
+        "https://news.ycombinator.com/item?id=42",
+      ]),
     };
     const candidate = {
       id: "C001",
