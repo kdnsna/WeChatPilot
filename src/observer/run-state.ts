@@ -545,6 +545,46 @@ export function finishRunRecord(projectRoot: string, report: RunReport): void {
   }
 }
 
+export function replaceFinalRunReport(
+  projectRoot: string,
+  report: RunReport,
+): void {
+  try {
+    const replacement = RunReportSchema.parse(report);
+    if (
+      !isAuditedAuthority(replacement) ||
+      replacement.issueNumber === undefined ||
+      replacement.issueLabel === undefined
+    ) {
+      throw safeError();
+    }
+    const current = recordForUpdate(projectRoot, replacement.runId);
+    if (
+      current.kind !== "final" ||
+      current.value.issueNumber !== undefined ||
+      current.value.issueLabel !== undefined
+    ) {
+      throw safeError();
+    }
+    const {
+      issueNumber: _replacementIssueNumber,
+      issueLabel: _replacementIssueLabel,
+      ...replacementContent
+    } = replacement;
+    const {
+      issueNumber: _currentIssueNumber,
+      issueLabel: _currentIssueLabel,
+      ...currentContent
+    } = current.value;
+    if (JSON.stringify(replacementContent) !== JSON.stringify(currentContent)) {
+      throw safeError();
+    }
+    writeRecord(projectRoot, replacement.runId, replacement);
+  } catch {
+    throw safeError();
+  }
+}
+
 export function recoverInterruptedRuns(
   options: RecoverInterruptedRunsOptions,
 ): RecoverInterruptedRunsResult {

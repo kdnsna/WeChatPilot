@@ -21,6 +21,7 @@ import {
   inspectRunState,
   listFinalRunReports,
   recoverInterruptedRuns,
+  replaceFinalRunReport,
   startRunRecord as startRunRecordRaw,
   updateRunChildPid as updateRunChildPidRaw,
   type StartRunRecordOptions,
@@ -548,6 +549,38 @@ describe("observer run-state journal", () => {
     expect(JSON.parse(readFileSync(runPath(projectRoot, ids.fourth), "utf8")).status).toBe(
       "running",
     );
+  });
+
+  it("atomically enriches a final report only with its first matching issue", () => {
+    const projectRoot = root();
+    startRunRecord({
+      projectRoot,
+      runId: ids.main,
+      job,
+      runnerPid: 1234,
+      startedAt: new Date("2026-07-19T01:00:00.000Z"),
+    });
+    const final = report(ids.main);
+    finishRunRecord(projectRoot, final);
+    const enriched = {
+      ...final,
+      issueNumber: 7,
+      issueLabel: "WP-000007",
+    } as RunReport;
+
+    for (const mutation of [
+      { ...enriched, summary: ["PRIVATE_RUN_STATE_SENTINEL"] },
+      { ...enriched, durationMs: enriched.durationMs + 1 },
+      { ...enriched, issueNumber: 8, issueLabel: "WP-000007" },
+    ]) {
+      expectSafeFailure(() => replaceFinalRunReport(projectRoot, mutation));
+      expect(listFinalRunReports(projectRoot)).toEqual([final]);
+    }
+
+    replaceFinalRunReport(projectRoot, enriched);
+    expect(listFinalRunReports(projectRoot)).toEqual([enriched]);
+    expect(statSync(runPath(projectRoot, ids.main)).mode & 0o777).toBe(0o600);
+    expectSafeFailure(() => replaceFinalRunReport(projectRoot, enriched));
   });
 
   it("lists only private final reports in stable order and inspects without details", () => {

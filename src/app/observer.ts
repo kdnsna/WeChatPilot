@@ -30,10 +30,27 @@ import {
   type RunManagedJobOptions,
 } from "../observer/managed-job.js";
 import {
+  renderEditorialReportCard,
+  type EditorialCardArtifact,
+} from "../observer/editorial-card.js";
+import {
+  loadEditorialConfig,
+  type EditorialConfig,
+} from "../observer/editorial-config.js";
+import {
   renderReportCard,
   type ReportCardArtifact,
 } from "../observer/report-card.js";
 import {
+  prepareReportVisual,
+  type PreparedReportVisual,
+} from "../observer/report-visual.js";
+import {
+  assignReportIssue,
+  type ReportIssue,
+} from "../observer/report-sequence.js";
+import {
+  attachIssue,
   buildRunReport,
   type BuildRunReportOptions,
   type RunAuthority,
@@ -44,6 +61,7 @@ import {
   finishRunRecord,
   listFinalRunReports,
   recoverInterruptedRuns,
+  replaceFinalRunReport,
   type RecoverInterruptedRunsOptions,
   type RecoverInterruptedRunsResult,
 } from "../observer/run-state.js";
@@ -58,6 +76,7 @@ import { shanghaiDateKey } from "../lib/time.js";
 
 const RECOVERY_SUMMARY = "任务因主机或进程中断，已在恢复后补记";
 const RENDER_FAILURE_CODE = "OBSERVER_REPORT_RENDER_FAILED";
+const SAFE_RENDER_ERROR = "Unable to prepare observer report image";
 
 interface PrepareObserverSenderOptions {
   readonly projectRoot: string;
@@ -81,6 +100,12 @@ export interface ObserverDependencies {
   readonly runJob?: (options: RunManagedJobOptions) => Promise<ManagedJobOutcome>;
   readonly normalize?: (options: BuildRunReportOptions) => RunReport;
   readonly finishRecord?: (projectRoot: string, report: RunReport) => void;
+  readonly loadEditorial?: typeof loadEditorialConfig;
+  readonly assignIssue?: typeof assignReportIssue;
+  readonly attachIssue?: typeof attachIssue;
+  readonly replaceFinalRecord?: typeof replaceFinalRunReport;
+  readonly prepareVisual?: typeof prepareReportVisual;
+  readonly renderEditorial?: typeof renderEditorialReportCard;
   readonly render?: (options: {
     readonly projectRoot: string;
     readonly report: RunReport;
@@ -126,6 +151,15 @@ interface ResolvedObserverDependencies {
   readonly runJob: (options: RunManagedJobOptions) => Promise<ManagedJobOutcome>;
   readonly normalize: (options: BuildRunReportOptions) => RunReport;
   readonly finishRecord: (projectRoot: string, report: RunReport) => void;
+  readonly loadEditorial: (projectRoot: string) => EditorialConfig;
+  readonly assignIssue: (options: {
+    readonly projectRoot: string;
+    readonly runId: string;
+  }) => Promise<ReportIssue>;
+  readonly attachIssue: typeof attachIssue;
+  readonly replaceFinalRecord: typeof replaceFinalRunReport;
+  readonly prepareVisual: typeof prepareReportVisual;
+  readonly renderEditorial: typeof renderEditorialReportCard;
   readonly render: (options: {
     readonly projectRoot: string;
     readonly report: RunReport;
@@ -155,6 +189,14 @@ function resolvedDependencies(
     runJob: supplied?.runJob ?? runManagedJob,
     normalize: supplied?.normalize ?? buildRunReport,
     finishRecord: supplied?.finishRecord ?? finishRunRecord,
+    loadEditorial: supplied?.loadEditorial ?? loadEditorialConfig,
+    assignIssue: supplied?.assignIssue ?? assignReportIssue,
+    attachIssue: supplied?.attachIssue ?? attachIssue,
+    replaceFinalRecord:
+      supplied?.replaceFinalRecord ?? replaceFinalRunReport,
+    prepareVisual: supplied?.prepareVisual ?? prepareReportVisual,
+    renderEditorial:
+      supplied?.renderEditorial ?? renderEditorialReportCard,
     render: supplied?.render ?? renderReportCard,
     prepareText:
       supplied?.prepareText ??
@@ -201,42 +243,121 @@ async function logRenderFailure(
     });
     await logger.error(RENDER_FAILURE_CODE);
   } catch {
-    // A logging failure must not prevent the text-only audited report.
+    // A logging failure must not expose or replace the safe render failure.
   }
+}
+
+interface PreparedFinalReportArtifacts {
+  readonly report: RunReport;
+  readonly artifact: ReportCardArtifact | EditorialCardArtifact;
+}
+
+function issueFromReport(report: RunReport): ReportIssue | null {
+  if (report.issueNumber === undefined || report.issueLabel === undefined) {
+    return null;
+  }
+  return { number: report.issueNumber, label: report.issueLabel };
+}
+
+async function prepareFinalReportArtifacts(
+  options: RunObserverJobOptions,
+  dependencies: ResolvedObserverDependencies,
+  report: RunReport,
+  disposition: RunDeliveryDisposition,
+): Promise<PreparedFinalReportArtifacts> {
+  if (report.editorial === undefined) {
+    return {
+      report,
+      artifact: dependencies.render({
+        projectRoot: options.projectRoot,
+        report,
+      }),
+    };
+  }
+
+  let finalReport = report;
+  let issue = issueFromReport(finalReport);
+  if (issue === null) {
+    if (disposition !== "missing") {
+      return {
+        report,
+        artifact: dependencies.render({
+          projectRoot: options.projectRoot,
+          report,
+        }),
+      };
+    }
+    issue = await dependencies.assignIssue({
+      projectRoot: options.projectRoot,
+      runId: report.runId,
+    });
+    finalReport = dependencies.attachIssue(report, issue);
+    dependencies.replaceFinalRecord(options.projectRoot, finalReport);
+  }
+
+  const imageConfig = dependencies.loadEditorial(options.projectRoot);
+  if (imageConfig.mode === "legacy") {
+    return {
+      report: finalReport,
+      artifact: dependencies.render({
+        projectRoot: options.projectRoot,
+        report: finalReport,
+      }),
+    };
+  }
+
+  const visual: PreparedReportVisual = await dependencies.prepareVisual({
+    projectRoot: options.projectRoot,
+    report: finalReport,
+    issue,
+    config: imageConfig,
+  });
+  return {
+    report: finalReport,
+    artifact: dependencies.renderEditorial({
+      projectRoot: options.projectRoot,
+      report: finalReport,
+      visual,
+    }),
+  };
 }
 
 async function deliverFinalReport(
   options: RunObserverJobOptions,
   dependencies: ResolvedObserverDependencies,
   report: RunReport,
-): Promise<void> {
-  let imagePath: string | undefined;
+  disposition: RunDeliveryDisposition,
+): Promise<RunReport> {
+  let prepared: PreparedFinalReportArtifacts;
   try {
-    imagePath = dependencies.render({ projectRoot: options.projectRoot, report })
-      .pngPath;
+    prepared = await prepareFinalReportArtifacts(
+      options,
+      dependencies,
+      report,
+      disposition,
+    );
   } catch {
     await logRenderFailure(options, dependencies);
+    throw new Error(SAFE_RENDER_ERROR);
   }
 
   const senderOptions = {
     projectRoot: options.projectRoot,
-    report,
+    report: prepared.report,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   };
   const sendText = await dependencies.prepareText(senderOptions);
-  const sendImage =
-    imagePath === undefined
-      ? async (): Promise<{ readonly status: "sent" }> => ({ status: "sent" })
-      : await dependencies.prepareImage(senderOptions);
+  const sendImage = await dependencies.prepareImage(senderOptions);
 
   await dependencies.deliver({
     projectRoot: options.projectRoot,
-    report,
+    report: prepared.report,
     sendText,
     sendImage,
-    ...(imagePath === undefined ? {} : { imagePath }),
+    imagePath: prepared.artifact.pngPath,
     ...(options.now === undefined ? {} : { now: options.now }),
   });
+  return prepared.report;
 }
 
 function recoveredReport(
@@ -277,7 +398,13 @@ export async function runObserverJob(
 
   for (const authority of recovery.recovered) {
     const report = recoveredReport(options, dependencies, authority);
-    await deliverFinalReport(options, dependencies, report);
+    const disposition = dependencies.deliveryDisposition({
+      projectRoot: options.projectRoot,
+      report,
+    });
+    if (disposition === "missing" || disposition === "retryable") {
+      await deliverFinalReport(options, dependencies, report, disposition);
+    }
   }
 
   for (const report of dependencies.listFinalReports(options.projectRoot)) {
@@ -286,7 +413,7 @@ export async function runObserverJob(
       report,
     });
     if (disposition === "missing" || disposition === "retryable") {
-      await deliverFinalReport(options, dependencies, report);
+      await deliverFinalReport(options, dependencies, report, disposition);
     }
   }
 
@@ -315,8 +442,12 @@ export async function runObserverJob(
       draft: outcome.draft,
     });
     dependencies.finishRecord(options.projectRoot, report);
-    await deliverFinalReport(options, dependencies, report);
-    return report;
+    return await deliverFinalReport(
+      options,
+      dependencies,
+      report,
+      "missing",
+    );
   } finally {
     await lock.release();
   }

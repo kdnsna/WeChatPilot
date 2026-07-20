@@ -14,7 +14,9 @@ import {
 } from "../../src/delivery/run-report-delivery.js";
 import { WechatDeliveryRejectedError } from "../../src/delivery/wechat.js";
 import type { ObserverConfig, ObserverJob } from "../../src/observer/config.js";
+import type { EditorialConfig } from "../../src/observer/editorial-config.js";
 import { ObserverTaskBusyError } from "../../src/observer/task-lock.js";
+import type { PreparedReportVisual } from "../../src/observer/report-visual.js";
 import type {
   RunAuthority,
   RunReport,
@@ -26,6 +28,7 @@ import {
   updateRunChildPid,
 } from "../../src/observer/run-state.js";
 import { renderReportCard } from "../../src/observer/report-card.js";
+import { validEditorialPayload } from "../helpers/editorial.js";
 
 const ROOT = "/private/tmp/wechat-observer-test";
 const RECOVERED_ID = "018f514c-1a2b-7abc-8def-1234567890ab";
@@ -63,6 +66,11 @@ const job: ObserverJob = {
 };
 
 const config: ObserverConfig = { version: 1, jobs: [job] };
+const editorialConfig = {
+  mode: "editorial",
+  generation: { timeoutMs: 180_000, maximumAttempts: 3 },
+  style: { version: "editorial-v1", heroHeight: 480 },
+} as EditorialConfig;
 
 function authority(
   runId: string,
@@ -95,6 +103,30 @@ function report(
   };
 }
 
+function editorialReport(runId: string): RunReport {
+  return {
+    ...report(runId),
+    editorial: validEditorialPayload(),
+  };
+}
+
+function numberedEditorialReport(runId: string): RunReport {
+  return {
+    ...editorialReport(runId),
+    issueNumber: 7,
+    issueLabel: "WP-000007",
+  };
+}
+
+const preparedVisual: PreparedReportVisual = {
+  mode: "generated",
+  attempts: 1,
+  heroPath: `${ROOT}/output/${CURRENT_ID}.hero.png`,
+  heroSha256: "a".repeat(64),
+  styleVersion: "editorial-v1",
+  promptSha256: "b".repeat(64),
+};
+
 function dependencies(
   overrides: Partial<ObserverDependencies> = {},
 ): ObserverDependencies {
@@ -122,6 +154,21 @@ function dependencies(
     })),
     normalize: vi.fn(({ authority: value }) => report(value.runId, value.status)),
     finishRecord: vi.fn(() => undefined),
+    loadEditorial: vi.fn(() => editorialConfig),
+    assignIssue: vi.fn(async () => ({ number: 7, label: "WP-000007" })),
+    attachIssue: vi.fn((value) => ({
+      ...value,
+      issueNumber: 7,
+      issueLabel: "WP-000007",
+    })),
+    replaceFinalRecord: vi.fn(() => undefined),
+    prepareVisual: vi.fn(async () => preparedVisual),
+    renderEditorial: vi.fn(({ report: value, visual }) => ({
+      pngPath: `${ROOT}/output/${value.runId}.png`,
+      jsonPath: `${ROOT}/output/${value.runId}.json`,
+      issueLabel: value.issueLabel!,
+      visualMode: visual.mode,
+    })),
     render: vi.fn(({ report: value }) => ({
       pngPath: `${ROOT}/output/${value.runId}.png`,
       jsonPath: `${ROOT}/output/${value.runId}.json`,
@@ -151,6 +198,97 @@ function dependencies(
 }
 
 describe("observer orchestration", () => {
+  it("orders numbering, visual preparation, rendering, and delivery after finalization", async () => {
+    const calls: string[] = [];
+    const deps = dependencies({
+      normalize: vi.fn(() => editorialReport(CURRENT_ID)),
+      finishRecord: vi.fn(() => calls.push("finish-record")),
+      assignIssue: vi.fn(async () => {
+        calls.push("assign-issue");
+        return { number: 7, label: "WP-000007" };
+      }),
+      attachIssue: vi.fn((value, issue) => ({
+        ...value,
+        issueNumber: issue.number,
+        issueLabel: issue.label,
+      })),
+      replaceFinalRecord: vi.fn(() => calls.push("persist-numbered-report")),
+      prepareVisual: vi.fn(async () => {
+        calls.push("prepare-visual");
+        return preparedVisual;
+      }),
+      renderEditorial: vi.fn(({ report: value, visual }) => {
+        calls.push("render-card");
+        return {
+          pngPath: `${ROOT}/output/${value.runId}.png`,
+          jsonPath: `${ROOT}/output/${value.runId}.json`,
+          issueLabel: value.issueLabel!,
+          visualMode: visual.mode,
+        };
+      }),
+      prepareText: vi.fn(async () => {
+        calls.push("prepare-text");
+        return async () => ({ status: "sent" as const, chunks: 1 });
+      }),
+      prepareImage: vi.fn(async () => {
+        calls.push("prepare-image");
+        return async () => ({ status: "sent" as const });
+      }),
+      deliver: vi.fn(async () => {
+        calls.push("deliver");
+        return {
+          status: "sent" as const,
+          textChunks: 1,
+          image: "sent" as const,
+          textAttempt: 1,
+          imageAttempt: 1,
+        };
+      }),
+    });
+
+    const result = await runObserverJob({
+      projectRoot: ROOT,
+      jobId: job.id,
+      dependencies: deps,
+    });
+
+    expect(result).toEqual(numberedEditorialReport(CURRENT_ID));
+    expect(calls).toEqual([
+      "finish-record",
+      "assign-issue",
+      "persist-numbered-report",
+      "prepare-visual",
+      "render-card",
+      "prepare-text",
+      "prepare-image",
+      "deliver",
+    ]);
+  });
+
+  it("assigns an issue but skips Image 2 in emergency legacy mode", async () => {
+    const legacyConfig = { ...editorialConfig, mode: "legacy" as const };
+    const deps = dependencies({
+      normalize: vi.fn(() => editorialReport(CURRENT_ID)),
+      loadEditorial: vi.fn(() => legacyConfig),
+    });
+
+    const result = await runObserverJob({
+      projectRoot: ROOT,
+      jobId: job.id,
+      dependencies: deps,
+    });
+
+    expect(result).toEqual(numberedEditorialReport(CURRENT_ID));
+    expect(deps.assignIssue).toHaveBeenCalledOnce();
+    expect(deps.replaceFinalRecord).toHaveBeenCalledOnce();
+    expect(deps.prepareVisual).not.toHaveBeenCalled();
+    expect(deps.renderEditorial).not.toHaveBeenCalled();
+    expect(deps.render).toHaveBeenCalledWith({
+      projectRoot: ROOT,
+      report: numberedEditorialReport(CURRENT_ID),
+    });
+  });
+
   it("runs recovery, the managed job, finalization, rendering, delivery, and one outer lock release in exact order", async () => {
     const calls: string[] = [];
     const release = vi.fn(async () => {
@@ -358,7 +496,7 @@ describe("observer orchestration", () => {
     expect(deps.runJob).not.toHaveBeenCalled();
   });
 
-  it("continues with text-only delivery when rendering fails and logs only a stable code", async () => {
+  it("keeps delivery missing when rendering fails and logs only a stable code", async () => {
     const logger = {
       log: vi.fn(async () => undefined),
       debug: vi.fn(async () => undefined),
@@ -373,13 +511,68 @@ describe("observer orchestration", () => {
       createLogger: vi.fn(() => logger),
     });
 
-    await runObserverJob({ projectRoot: ROOT, jobId: job.id, dependencies: deps });
+    let thrown: unknown;
+    try {
+      await runObserverJob({ projectRoot: ROOT, jobId: job.id, dependencies: deps });
+    } catch (error) {
+      thrown = error;
+    }
 
+    expect(thrown).toMatchObject({
+      message: "Unable to prepare observer report image",
+    });
+    expect(JSON.stringify(thrown)).not.toContain("must-not-enter-log");
     expect(logger.error).toHaveBeenCalledWith("OBSERVER_REPORT_RENDER_FAILED");
+    expect(deps.prepareText).not.toHaveBeenCalled();
     expect(deps.prepareImage).not.toHaveBeenCalled();
-    expect(deps.deliver).toHaveBeenCalledWith(
-      expect.not.objectContaining({ imagePath: expect.anything() }),
-    );
+    expect(deps.deliver).not.toHaveBeenCalled();
+  });
+
+  it("reuses a numbered editorial visual for retryable outbox delivery", async () => {
+    const value = numberedEditorialReport(RECOVERED_ID);
+    const deps = dependencies({
+      recover: vi.fn(() => ({
+        recovered: [],
+        activeTaskIds: [job.id],
+        invalidRecords: 0,
+      })),
+      listFinalReports: vi.fn(() => [value]),
+      deliveryDisposition: vi.fn(() => "retryable" as const),
+    });
+
+    await expect(
+      runObserverJob({ projectRoot: ROOT, jobId: job.id, dependencies: deps }),
+    ).rejects.toBeInstanceOf(ObserverTaskBusyError);
+
+    expect(deps.assignIssue).not.toHaveBeenCalled();
+    expect(deps.replaceFinalRecord).not.toHaveBeenCalled();
+    expect(deps.prepareVisual).toHaveBeenCalledOnce();
+    expect(deps.renderEditorial).toHaveBeenCalledOnce();
+    expect(deps.deliver).toHaveBeenCalledOnce();
+  });
+
+  it("does not regenerate, render, or send an indeterminate outbox report", async () => {
+    const value = numberedEditorialReport(RECOVERED_ID);
+    const deps = dependencies({
+      recover: vi.fn(() => ({
+        recovered: [],
+        activeTaskIds: [job.id],
+        invalidRecords: 0,
+      })),
+      listFinalReports: vi.fn(() => [value]),
+      deliveryDisposition: vi.fn(() => "indeterminate" as const),
+    });
+
+    await expect(
+      runObserverJob({ projectRoot: ROOT, jobId: job.id, dependencies: deps }),
+    ).rejects.toBeInstanceOf(ObserverTaskBusyError);
+
+    expect(deps.assignIssue).not.toHaveBeenCalled();
+    expect(deps.prepareVisual).not.toHaveBeenCalled();
+    expect(deps.renderEditorial).not.toHaveBeenCalled();
+    expect(deps.prepareText).not.toHaveBeenCalled();
+    expect(deps.prepareImage).not.toHaveBeenCalled();
+    expect(deps.deliver).not.toHaveBeenCalled();
   });
 
   it("reuses the real card after an image rejection and reconciles without resending text", async () => {
