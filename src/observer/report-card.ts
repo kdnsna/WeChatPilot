@@ -37,7 +37,7 @@ export interface ReportCardArtifact {
   readonly jsonPath: string;
 }
 
-function escapeText(value: string): string {
+export function escapeText(value: string): string {
   const xmlSafe = [...value]
     .filter((character) => {
       const codePoint = character.codePointAt(0);
@@ -63,10 +63,13 @@ function escapeText(value: string): string {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&apos;")
     .replaceAll("=", "&#61;")
-    .replaceAll(":", "&#58;");
+    .replaceAll(":", "&#58;")
+    .replaceAll("@", "&#64;")
+    .replaceAll("(", "&#40;")
+    .replaceAll(")", "&#41;");
 }
 
-type FontSize = 24 | 28 | 32 | 40 | 56;
+type FontSize = number;
 
 function isEmojiCodePoint(codePoint: number): boolean {
   return (
@@ -136,7 +139,7 @@ function prefixWithinPixelBudget(
   return characters.slice(0, end);
 }
 
-function fitTextLines(
+export function fitTextLines(
   value: string,
   fontSize: FontSize,
   maximumPixelWidth: number,
@@ -176,7 +179,7 @@ function fitTextLines(
   return lines.length === 0 ? [""] : lines;
 }
 
-function singleLine(
+export function singleLine(
   value: string,
   fontSize: FontSize,
   x: number,
@@ -192,7 +195,7 @@ function singleLine(
   );
 }
 
-function textNode(
+export function textNode(
   x: number,
   y: number,
   size: FontSize,
@@ -203,7 +206,7 @@ function textNode(
   return `<text x="${x}" y="${y}" font-size="${size}" font-weight="${weight}" fill="${color}">${escapeText(value)}</text>`;
 }
 
-function shanghaiParts(instant: string): {
+export function shanghaiParts(instant: string): {
   readonly date: string;
   readonly time: string;
 } {
@@ -247,7 +250,7 @@ function stableValue(value: unknown): unknown {
   return value;
 }
 
-function stableReportJson(report: RunReport): string {
+export function stableReportJson(report: RunReport): string {
   return `${JSON.stringify(stableValue(report), null, 2)}\n`;
 }
 
@@ -414,7 +417,13 @@ export function buildReportCardSvg(report: RunReport): string {
       1312,
       24,
       500,
-      singleLine(`Run ${report.runId}`, 24, 112),
+      singleLine(
+        report.issueLabel === undefined
+          ? `Run ${report.runId}`
+          : `${report.issueLabel} · Run ${report.runId.slice(0, 8).toUpperCase()}`,
+        24,
+        112,
+      ),
       "#64748b",
     ),
     textNode(

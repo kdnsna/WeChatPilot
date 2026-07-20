@@ -15,7 +15,7 @@ import {
 } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
-import { isValidPng } from "../lib/png.js";
+import { pngDimensions } from "../lib/png.js";
 
 const MAX_IMAGE_BYTES = 5 * 1_024 * 1_024;
 const PREPARATION_ERROR_MESSAGE =
@@ -177,11 +177,11 @@ function readReportPng(projectRoot: string, imagePath: string): Buffer {
       throw new Error("image changed while reading");
     }
     const image = buffer.subarray(0, bytesRead);
-    if (!isValidPng(image, {
-      width: 1_080,
-      height: 1_440,
-      maximumBytes: MAX_IMAGE_BYTES,
-    })) {
+    const dimensions = pngDimensions(image);
+    if (
+      dimensions?.width !== 1_080 ||
+      (dimensions.height !== 1_440 && dimensions.height !== 2_400)
+    ) {
       throw new Error("invalid report png");
     }
     return Buffer.from(image);

@@ -181,6 +181,16 @@ describe("report card SVG", () => {
     }
   });
 
+  it("includes an assigned issue in the compatibility footer", () => {
+    const value = {
+      ...report(),
+      issueNumber: 127,
+      issueLabel: "WP-000127",
+    } as RunReport;
+
+    expect(buildReportCardSvg(value)).toContain("WP-000127");
+  });
+
   it("keeps hostile dynamic fields in escaped text nodes without resource hooks", () => {
     const hostile = {
       ...report("failed"),

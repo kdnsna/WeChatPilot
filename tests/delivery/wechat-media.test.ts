@@ -316,6 +316,21 @@ describe("WeChat report image delivery", () => {
     });
   });
 
+  it("accepts the fixed 1080x2400 editorial report dimension", () => {
+    const { root, imagePath } = projectWithBoundOwner();
+    const png = realReportPng(1_080, 2_400);
+    writeFileSync(imagePath, png);
+
+    const prepared = wechatMedia.prepareWechatImageMedia({
+      projectRoot: root,
+      imagePath,
+      randomBytes: () => Buffer.alloc(16, 0x33),
+    });
+
+    expect(prepared.rawSize).toBe(png.length);
+    expect(prepared.rawMd5).toBe(createHash("md5").update(png).digest("hex"));
+  });
+
   it("rejects an image outside the project before any request", async () => {
     const bound = projectWithBoundOwner();
     const outside = projectWithBoundOwner();
