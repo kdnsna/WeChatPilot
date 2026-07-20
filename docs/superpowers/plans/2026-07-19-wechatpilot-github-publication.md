@@ -30,7 +30,7 @@
 - Create: `tests/project/branding.test.ts`
 - Test: `tests/project/branding.test.ts`
 
-- [ ] **Step 1: Write the failing branding test**
+- [x] **Step 1: Write the failing branding test**
 
 ```ts
 import { readFile } from 'node:fs/promises';
@@ -63,7 +63,7 @@ describe('WeChatPilot public identity', () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused test and verify the old branding fails**
+- [x] **Step 2: Run the focused test and verify the old branding fails**
 
 Run:
 
@@ -83,7 +83,7 @@ Expected: FAIL because `README.md`, `package.json`, and the issue contact link s
 - Modify: `.github/ISSUE_TEMPLATE/config.yml`
 - Test: `tests/project/branding.test.ts`
 
-- [ ] **Step 1: Replace the README title and opening positioning**
+- [x] **Step 1: Replace the README title and opening positioning**
 
 Use this opening while retaining all existing operational and security documentation below it:
 
@@ -98,7 +98,7 @@ WeChatPilot 是一个运行在本机的微信 AI 自动化平台。当前内置�
 > WeChatPilot 是独立、非微信或腾讯官方项目，与微信及腾讯不存在隶属、授权或背书关系。
 ```
 
-- [ ] **Step 2: Add private-package repository metadata**
+- [x] **Step 2: Add private-package repository metadata**
 
 Set these top-level fields in `package.json` without changing runtime scripts or dependency versions:
 
@@ -119,7 +119,7 @@ Set these top-level fields in `package.json` without changing runtime scripts or
 }
 ```
 
-- [ ] **Step 3: Correct the issue-template health-check link**
+- [x] **Step 3: Correct the issue-template health-check link**
 
 ```yaml
 blank_issues_enabled: false
@@ -129,7 +129,7 @@ contact_links:
     about: 提交 Issue 前先运行 README 中的健康检查。
 ```
 
-- [ ] **Step 4: Run the focused test and verify it passes**
+- [x] **Step 4: Run the focused test and verify it passes**
 
 Run the Task 1 command again.
 
@@ -145,7 +145,7 @@ Expected: 1 test file passed; the public brand is WeChatPilot and the deployed L
 - Add: `.github/ISSUE_TEMPLATE/feature_request.yml`
 - Add: `.github/ISSUE_TEMPLATE/config.yml`
 
-- [ ] **Step 1: Parse every YAML control file with the installed YAML library**
+- [x] **Step 1: Parse every YAML control file with the installed YAML library**
 
 Run:
 
@@ -165,7 +165,7 @@ console.log("github-yaml: ok");
 
 Expected: `github-yaml: ok`.
 
-- [ ] **Step 2: Confirm CI is least-privilege and pinned**
+- [x] **Step 2: Confirm CI is least-privilege and pinned**
 
 Run:
 
@@ -181,7 +181,7 @@ Expected: all policies and commands are found; no floating action tag appears.
 - Test: all root and vendor tests
 - Inspect: all tracked and untracked publication files
 
-- [ ] **Step 1: Run the complete local verification suite**
+- [x] **Step 1: Run the complete local verification suite**
 
 Run:
 
@@ -199,7 +199,7 @@ PATH=/opt/homebrew/opt/node@22/bin:/usr/bin:/bin \
 
 Expected: root tests, type checking, build, and all 81 pinned-vendor tests pass.
 
-- [ ] **Step 2: Verify the submodule pin and LaunchAgent syntax**
+- [x] **Step 2: Verify the submodule pin and LaunchAgent syntax**
 
 Run:
 
@@ -210,7 +210,7 @@ git -C vendor/cli-in-wechat rev-parse HEAD
 
 Expected: commit `75d7db9338e133080fef9914b92ceb5e3ebd0dfc` and `OK`.
 
-- [ ] **Step 3: Inspect ignored and tracked paths for sensitive artifacts**
+- [x] **Step 3: Inspect ignored and tracked paths for sensitive artifacts**
 
 Run:
 
@@ -228,7 +228,7 @@ Expected: runtime paths are ignored; no tracked private artifact appears; any so
 **Files:**
 - Stage: `README.md`, `package.json`, `.github/`, `tests/project/branding.test.ts`, and this plan
 
-- [ ] **Step 1: Rename the initial branch and stage only approved files**
+- [x] **Step 1: Rename the initial branch and stage only approved files**
 
 Run:
 
@@ -241,7 +241,7 @@ git status --short --branch
 
 Expected: branch `main`; only the approved WeChatPilot and repository-management files are staged.
 
-- [ ] **Step 2: Commit the publication changes**
+- [x] **Step 2: Commit the publication changes**
 
 Run:
 
@@ -256,7 +256,7 @@ Expected: one new local commit after the verified baseline.
 **Files:**
 - Remote state only; no new local files
 
-- [ ] **Step 1: Reverify GitHub identity, target availability, and repository scope**
+- [x] **Step 1: Reverify GitHub identity, target availability, and repository scope**
 
 Run:
 
@@ -269,7 +269,7 @@ git remote -v
 
 Expected: active login `kdnsna`; target repository absent; no conflicting remote.
 
-- [ ] **Step 2: Create the private repository and push `main`**
+- [x] **Step 2: Create the private repository and push `main`**
 
 Run:
 
@@ -284,12 +284,14 @@ gh repo create WeChatPilot \
 
 Expected: `https://github.com/kdnsna/WeChatPilot` is created, `main` is pushed, and `origin/main` tracks the local branch.
 
+Execution note: GitHub CLI 2.88.1 misclassified the isolated Git worktree because `git rev-parse --git-dir` returned the worktree's absolute gitdir instead of `.git`. The repository was therefore created with `gh repo create kdnsna/WeChatPilot --private`, then connected and pushed with `git remote add origin git@github.com:kdnsna/WeChatPilot.git` and `git push -u origin main`. The resulting remote and branch state are equivalent to the planned command.
+
 ### Task 7: Configure repository metadata and project management
 
 **Files:**
 - GitHub repository settings, labels, milestone, and issues
 
-- [ ] **Step 1: Configure merge policy, features, and topics**
+- [x] **Step 1: Configure merge policy, features, and topics**
 
 After checking `gh repo edit --help` for supported flags, configure:
 
@@ -318,7 +320,7 @@ gh repo edit kdnsna/WeChatPilot \
 
 Expected: repository settings and nine topics match the approved design.
 
-- [ ] **Step 2: Create the project labels**
+- [x] **Step 2: Create the project labels**
 
 Create or update these exact label definitions using `gh label create --force --repo kdnsna/WeChatPilot`:
 
@@ -337,7 +339,7 @@ triage           D4C5F9  等待分类
 
 Expected: all ten labels exist with descriptions and stable colors.
 
-- [ ] **Step 3: Create the v1.1 milestone**
+- [x] **Step 3: Create the v1.1 milestone**
 
 Run:
 
@@ -349,7 +351,7 @@ gh api --method POST repos/kdnsna/WeChatPilot/milestones \
 
 Expected: one open milestone named `v1.1 通用 Chatbot 基础`.
 
-- [ ] **Step 4: Create four scoped issues in the milestone**
+- [x] **Step 4: Create four scoped issues in the milestone**
 
 Create the following issues with `gh issue create --repo kdnsna/WeChatPilot --milestone 'v1.1 通用 Chatbot 基础'`:
 
@@ -378,7 +380,7 @@ Expected: four open, labeled issues attached to the milestone.
 **Files:**
 - Inspect GitHub state and local Git state
 
-- [ ] **Step 1: Verify repository identity and settings**
+- [x] **Step 1: Verify repository identity and settings**
 
 Run:
 
@@ -391,7 +393,7 @@ gh issue list --repo kdnsna/WeChatPilot --milestone 'v1.1 通用 Chatbot 基础'
 
 Expected: private `main` repository, approved settings/topics, ten custom labels, one open milestone, and four open issues.
 
-- [ ] **Step 2: Wait for the first CI run and require success**
+- [x] **Step 2: Wait for the first CI run and require success**
 
 Run:
 
@@ -402,7 +404,7 @@ gh run watch --repo kdnsna/WeChatPilot <database-id> --exit-status
 
 Expected: the initial `main` CI run concludes `success`. If it fails, inspect with `gh run view --log-failed`, fix the demonstrated cause, rerun local gates, commit, push, and recheck.
 
-- [ ] **Step 3: Perform the final local publication audit**
+- [x] **Step 3: Perform the final local publication audit**
 
 Run:
 

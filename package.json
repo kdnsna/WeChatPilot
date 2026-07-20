@@ -1,7 +1,16 @@
 {
-  "name": "daily-tech-digest",
+  "name": "wechatpilot",
   "version": "0.1.0",
   "private": true,
+  "description": "Local-first AI automation for WeChat",
+  "homepage": "https://github.com/kdnsna/WeChatPilot#readme",
+  "bugs": {
+    "url": "https://github.com/kdnsna/WeChatPilot/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kdnsna/WeChatPilot.git"
+  },
   "type": "module",
   "engines": {
     "node": ">=22 <23"

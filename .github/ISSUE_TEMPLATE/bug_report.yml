@@ -1,0 +1,44 @@
+name: Bug 报告
+description: 报告采集、生成、发送或定时运行异常
+title: "[Bug] "
+labels: [bug, triage]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影响模块
+      options:
+        - collectors
+        - ranking
+        - digest
+        - wechat
+        - automation
+        - security
+    validations:
+      required: true
+  - type: textarea
+    id: symptom
+    attributes:
+      label: 现象
+      description: 请勿粘贴 Token、Cookie、context token 或完整私有日志。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: 安全确认
+      options:
+        - label: 已移除所有凭据、用户 ID、Cookie 和个人数据
+          required: true

@@ -1,8 +1,17 @@
-# 每日科技情报（本地单向微信推送）
+# WeChatPilot
 
-这是一个运行在本机 macOS 上的 Node.js 22 / TypeScript 项目。它每天收集过去 24 小时的技术信号，用透明指标完成归一化、聚类、排序和七日去重，再通过受限的 `codex exec` 生成中文日报，最后单向推送到扫码绑定的微信 Chatbot。
+> Local-first AI automation for WeChat
+
+WeChatPilot 是一个运行在本机的微信 AI 自动化平台。当前内置的第一个工作流是“每日科技情报”：它每天收集过去 24 小时的技术信号，用透明指标完成归一化、聚类、排序和七日去重，再通过受限的 `codex exec` 生成中文日报，最后单向推送到扫码绑定的微信 Chatbot。后续工作流将复用同一套本地调度、权限、投递和审计基础设施。
+
+> [!IMPORTANT]
+> WeChatPilot 是独立、非微信或腾讯官方项目，与微信及腾讯不存在隶属、授权或背书关系。
 
 项目不会从微信执行命令，不会启动 `cli-in-wechat` 的 Router、Codex 适配器或远程控制入口，也不会使用 `--dangerously-bypass-approvals-and-sandbox`。微信不能启动、批准、恢复、停止或修改 Codex 任务；它在本项目中始终只是单向投递终点。微信凭据和 context token 只保存在本项目被 Git 忽略的 `.state/wechat/`，目录权限为 `0700`、文件权限为 `0600`；命令输出和日志只报告就绪状态，不显示具体值、用户 ID 或令牌。
+
+## 产品方向
+
+WeChatPilot 将科技日报作为首个经过真实运行验证的内置工作流，而不是把产品限制为资讯工具。后续版本会逐步抽象消息与事件接口、工作流注册、最小权限策略和可审计的本地插件机制。任何入站消息能力都必须经过独立安全设计；默认边界继续是单向发送，不开放远程 Shell、任意 Mac 命令或 Codex 远程控制。
 
 ## 运行环境
 
@@ -232,7 +241,7 @@ PATH=/opt/homebrew/opt/node@22/bin:/usr/bin:/bin \
 
 该脚本现在由 Observer 启动受审计的 `daily-tech-digest` 任务：日报投递完成后，再发送对应的文字运行报告和 PNG 卡片。如果上次 Observer 在任务运行期间被主机或进程中断，`interrupted` 报告只会在下一次 Observer 成功启动并完成恢复检查后上报。投递状态为 `indeterminate` 时永不自动重放，必须由运维人员核查，避免向微信重复发送。
 
-安装脚本必须收到显式确认参数，否则退出且不改动 LaunchAgent：
+新环境默认不会自动加载 LaunchAgent。安装脚本必须收到显式确认参数，否则退出且不改动 LaunchAgent：
 
 ```sh
 ./scripts/install-launchd.sh --confirm-load
