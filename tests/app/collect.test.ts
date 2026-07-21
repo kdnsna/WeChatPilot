@@ -27,7 +27,12 @@ function root(): string {
   const project = mkdtempSync(join(tmpdir(), "daily-tech-app-"));
   roots.push(project);
   mkdirSync(join(project, "config"), { recursive: true });
-  for (const name of ["sources.yaml", "ranking.yaml", "digest.yaml"]) {
+  for (const name of [
+    "sources.yaml",
+    "ranking.yaml",
+    "digest.yaml",
+    "security-profile.yaml",
+  ]) {
     copyFileSync(join(repositoryRoot, "config", name), join(project, "config", name));
   }
   return project;

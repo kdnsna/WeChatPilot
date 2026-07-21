@@ -1,4 +1,4 @@
-import { isAbsolute, resolve } from "node:path";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -35,8 +35,8 @@ function projectRootFromArguments(arguments_: readonly string[]): string {
     throw new RangeError("Usage: scheduled --project-root ABSOLUTE_PATH");
   }
   const value = arguments_[1];
-  if (value === undefined || !isAbsolute(value)) {
-    throw new RangeError("scheduled project root must be an absolute path");
+  if (value === undefined || value.trim() === "") {
+    throw new RangeError("scheduled project root is invalid");
   }
   return resolve(value);
 }

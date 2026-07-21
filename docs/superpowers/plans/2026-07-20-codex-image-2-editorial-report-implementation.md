@@ -62,13 +62,13 @@
 
 - [ ] **Step 1: Create an isolated feature worktree from the approved plan commit**
 
-Run from `/Users/kdnsna/Documents/微信 chat`:
+Run from `/path/to/WeChatPilot`:
 
 ```bash
 git worktree add .worktrees/gpt-image-editorial-report -b codex/gpt-image-editorial-report HEAD
 ```
 
-Expected: Git creates `/Users/kdnsna/Documents/微信 chat/.worktrees/gpt-image-editorial-report` on `codex/gpt-image-editorial-report` without changing the deployed checkout branch.
+Expected: Git creates `/path/to/WeChatPilot/.worktrees/gpt-image-editorial-report` on `codex/gpt-image-editorial-report` without changing the deployed checkout branch.
 
 - [ ] **Step 2: Install the locked dependencies in the worktree**
 
@@ -115,7 +115,7 @@ import {
   loadEditorialConfig,
 } from "../../src/observer/editorial-config.js";
 
-const PROJECT_ROOT = "/Users/kdnsna/Documents/微信 chat";
+const PROJECT_ROOT = "/path/to/WeChatPilot";
 
 describe("editorial image configuration", () => {
   it("loads one exact image-only Codex profile", () => {
@@ -180,8 +180,8 @@ style:
   heroHeight: 480
 codex:
   version: 0.144.4
-  nodeExecutable: /opt/homebrew/opt/node@22/bin/node
-  javascriptEntrypoint: /opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js
+  nodeExecutable: /path/to/node
+  javascriptEntrypoint: /path/to/codex.js
   globalArgs:
     - --sandbox
     - read-only
@@ -1114,9 +1114,9 @@ The CLI test must prove that no WeChat sender module is imported or called.
 
 ```json
 {
-  "report:image-probe": "tsx src/cli/probe-report-image.ts --project-root \"/Users/kdnsna/Documents/微信 chat\"",
-  "report:preview": "tsx src/cli/render-run-report-preview.ts --project-root \"/Users/kdnsna/Documents/微信 chat\"",
-  "report:test": "tsx src/cli/send-run-report-test.ts --project-root \"/Users/kdnsna/Documents/微信 chat\""
+  "report:image-probe": "tsx src/cli/probe-report-image.ts --project-root \"/path/to/WeChatPilot\"",
+  "report:preview": "tsx src/cli/render-run-report-preview.ts --project-root \"/path/to/WeChatPilot\"",
+  "report:test": "tsx src/cli/send-run-report-test.ts --project-root \"/path/to/WeChatPilot\""
 }
 ```
 
@@ -1156,7 +1156,7 @@ Add README sections covering:
 npm test
 npm run typecheck
 npm run build
-/usr/bin/plutil -lint launchd/com.kdnsna.daily-tech-digest.plist
+/usr/bin/plutil -lint launchd/io.wechatpilot.daily-tech-digest.plist
 git diff --check
 git status --short
 ```
@@ -1185,7 +1185,7 @@ If the design spec did not need a factual correction, stage only `README.md`.
 
 **Files:**
 - Runtime artifacts only under ignored `output/`, `.state/`, and `logs/`.
-- Installed plist: `/Users/kdnsna/Library/LaunchAgents/com.kdnsna.daily-tech-digest.plist`
+- Installed plist: `/path/to/LaunchAgents/io.wechatpilot.daily-tech-digest.plist`
 
 - [ ] **Step 1: Run the live capability probe from the feature worktree**
 
@@ -1237,7 +1237,7 @@ npm test
 npm run typecheck
 npm run build
 npm run health
-/usr/bin/plutil -lint launchd/com.kdnsna.daily-tech-digest.plist
+/usr/bin/plutil -lint launchd/io.wechatpilot.daily-tech-digest.plist
 git diff --check
 git status --short --branch
 ```
@@ -1246,7 +1246,7 @@ Expected: all tests pass; health is ready; Git is clean.
 
 - [ ] **Step 5: Fast-forward the deployed checkout only after approval**
 
-From `/Users/kdnsna/Documents/微信 chat`, verify the deployed checkout is clean and then fast-forward it to the reviewed feature branch:
+From `/path/to/WeChatPilot`, verify the deployed checkout is clean and then fast-forward it to the reviewed feature branch:
 
 ```bash
 git status --short --branch
@@ -1261,7 +1261,7 @@ Expected: fast-forward succeeds without a merge commit; dependency installation 
 
 Copy the installed plist to the existing pre-observer backup naming convention, validate that the source plist still points only to `dist/src/cli/observer.js --job daily-tech-digest`, then boot out and bootstrap the service. Do not change the schedule, owner, working directory, or send-only boundary.
 
-Expected: `launchctl print gui/$(id -u)/com.kdnsna.daily-tech-digest` shows the observer entry, no `KeepAlive`, no dangerous flags, and the 08:00 calendar trigger.
+Expected: `launchctl print gui/$(id -u)/io.wechatpilot.daily-tech-digest` shows the observer entry, no `KeepAlive`, no dangerous flags, and the 08:00 calendar trigger.
 
 - [ ] **Step 7: Observe one natural completion and verify final state**
 

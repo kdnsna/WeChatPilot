@@ -1,4 +1,4 @@
-import { isAbsolute, resolve } from "node:path";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -53,7 +53,7 @@ function parseArguments(arguments_: readonly string[]): {
     throw new ObserverCliUsageError();
   }
   const projectRoot = arguments_[1];
-  if (projectRoot === undefined || !isAbsolute(projectRoot)) {
+  if (projectRoot === undefined || projectRoot.trim() === "") {
     throw new ObserverCliUsageError();
   }
   return { projectRoot: resolve(projectRoot), jobId: FIXED_JOB };

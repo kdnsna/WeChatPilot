@@ -56,9 +56,6 @@ describe("observer CLI", () => {
   it.each([
     { arguments_: [] },
     { arguments_: ["--project-root", ROOT] },
-    {
-      arguments_: ["--project-root", "relative", "--job", "daily-tech-digest"],
-    },
     { arguments_: ["--project-root", ROOT, "--job", "other"] },
     {
       arguments_: [

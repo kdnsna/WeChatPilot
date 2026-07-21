@@ -408,7 +408,7 @@ describe("WeChat enrollment", () => {
         status: "pending",
         userId: "user-self",
         enrollmentStartedAtMs: resumedAt,
-        seenInitializationMessageIds: [40],
+        seenInitializationMessageIds: [40, "9007199254740992"],
       })}\n`,
       { encoding: "utf8", mode: 0o600 },
     );
@@ -429,20 +429,10 @@ describe("WeChat enrollment", () => {
             },
           ],
         }),
-        jsonResponse({
-          ret: 0,
-          get_updates_buf: "cursor-resumed",
-          msgs: [
-            {
-              message_id: Number.MAX_SAFE_INTEGER + 1,
-              create_time_ms: resumedAt + 1,
-              from_user_id: "user-self",
-              message_type: 1,
-              context_token: "resumed-context",
-              item_list: [{ type: 1, text_item: { text: "初始化" } }],
-            },
-          ],
-        }),
+        new Response(
+          `{"ret":0,"get_updates_buf":"cursor-resumed","msgs":[{"message_id":9007199254740993,"create_time_ms":${resumedAt + 1},"from_user_id":"user-self","message_type":1,"context_token":"resumed-context","item_list":[{"type":1,"text_item":{"text":"初始化"}}]}]}`,
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
       ],
       async () => {
         throw new Error("resume must not invoke QR login");
@@ -475,6 +465,15 @@ describe("WeChat enrollment", () => {
       }),
     ).resolves.toEqual({ status: "initialized", ownerBound: true });
     expect(resumed.requests).toHaveLength(2);
+    const storedContext = JSON.parse(readFileSync(contextPath, "utf8")) as {
+      initializationMessageId: string;
+      seenInitializationMessageIds: string[];
+    };
+    expect(storedContext.initializationMessageId).toBe("9007199254740993");
+    expect(storedContext.seenInitializationMessageIds).toContain("40");
+    expect(storedContext.seenInitializationMessageIds).toEqual(
+      expect.arrayContaining(["9007199254740992", "9007199254740993"]),
+    );
     expect(pollSummaries).toEqual([
       {
         totalMessages: 1,

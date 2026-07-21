@@ -83,7 +83,6 @@ describe("fixed editorial report preview", () => {
       ["--recipient", "owner"],
       ["--prompt", "PRIVATE_PROMPT"],
       ["--image", "/private/image.png"],
-      ["--project-root", "relative"],
     ]) {
       stdout.mockClear();
       stderr.mockClear();

@@ -241,11 +241,10 @@ function matchesArguments(actual: readonly string[], expected: readonly string[]
 
 const codexConfigSchema = z
   .object({
-    version: z.literal("0.144.4"),
-    nodeExecutable: z.literal("/opt/homebrew/opt/node@22/bin/node"),
-    javascriptEntrypoint: z.literal(
-      "/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js",
-    ),
+    version: z.string().min(1).max(128),
+    nodeExecutable: z.string().refine((value) => value === "{nodeExecutable}" || value.startsWith("/")),
+    javascriptEntrypoint: z.string().refine((value) => value === "{codexEntrypoint}" || value.startsWith("/")),
+    direct: z.boolean().default(false),
     globalArgs: z.array(z.string()),
     command: z.literal("exec"),
     execArgs: z.array(z.string()),
@@ -372,21 +371,22 @@ const codexConfigSchema = z
 export const DigestConfigSchema = z
   .object({
     version: z.literal(1),
-    timezone: z.literal("Asia/Shanghai"),
-    windowHours: z.literal(24),
+    timezone: z.string().min(1).max(128),
+    language: z.enum(["zh-CN", "en"]).default("zh-CN"),
+    windowHours: z.number().int().min(1).max(168),
     quotas: z
       .object({
-        community: z.literal(3),
-        news: z.literal(5),
-        github: z.literal(3),
-        deepReading: z.literal(2),
+        community: z.number().int().min(0).max(20),
+        news: z.number().int().min(0).max(20),
+        github: z.number().int().min(0).max(20),
+        deepReading: z.number().int().min(0).max(20),
       })
       .strict(),
     length: z
       .object({
         unit: z.literal("chinese-characters"),
-        min: z.literal(2000),
-        max: z.literal(3000),
+        min: z.number().int().min(500).max(20_000),
+        max: z.number().int().min(501).max(20_000),
       })
       .strict()
       .refine((length) => length.min < length.max, {
@@ -396,6 +396,9 @@ export const DigestConfigSchema = z
   })
   .strict();
 
+export const DigestUserConfigSchema = DigestConfigSchema.omit({ codex: true });
+
 export type SourcesConfig = z.infer<typeof SourcesConfigSchema>;
 export type RankingConfig = z.infer<typeof RankingConfigSchema>;
 export type DigestConfig = z.infer<typeof DigestConfigSchema>;
+export type UserConfig = z.infer<typeof DigestUserConfigSchema>;

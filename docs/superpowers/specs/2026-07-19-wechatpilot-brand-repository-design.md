@@ -53,7 +53,7 @@ Change now:
 
 Preserve for this release:
 
-- installed LaunchAgent label `com.kdnsna.daily-tech-digest`
+- installed LaunchAgent label `io.wechatpilot.daily-tech-digest`
 - current LaunchAgent file path and service state
 - `.state` files, delivery ledger, history, logs, and output paths
 - existing internal module and script names that are part of the working deployment

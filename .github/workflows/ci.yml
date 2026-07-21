@@ -20,10 +20,9 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - name: Checkout pinned sources
+      - name: Checkout sources
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          submodules: recursive
           persist-credentials: false
 
       - name: Use Node.js 22
@@ -35,16 +34,17 @@ jobs:
       - name: Install root dependencies
         run: npm ci
 
-      - name: Build and patch pinned WeChat adapter
-        run: |
-          npm --prefix vendor/cli-in-wechat ci
-          npm run vendor:build
-
       - name: Verify project
         run: |
+          npm run audit:runtime
+          npm run check:transport-boundary
           npm test
           npm run typecheck
           npm run build
 
-      - name: Verify pinned WeChat adapter
-        run: npm --prefix vendor/cli-in-wechat test
+      - name: Reject upstream remote-control imports
+        run: |
+          if rg -n 'vendor/cli-in-wechat|bridge/router|adapters/registry|/dist/index|initProxyFromEnv|ProxyAgent|from ["'"']undici' src; then
+            echo 'forbidden WeChat transport import detected' >&2
+            exit 1
+          fi

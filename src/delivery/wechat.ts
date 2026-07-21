@@ -1,7 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 
 import { z } from "zod";
@@ -16,6 +15,11 @@ import {
   createProjectPaths,
   resolveProjectPath,
 } from "../lib/paths.js";
+import {
+  fetchWithRetry as transportFetchWithRetry,
+  generateWechatUin as transportGenerateWechatUin,
+  login as transportLogin,
+} from "../transport/wechat-transport.js";
 
 export { WechatMediaPreparationError } from "./wechat-media.js";
 
@@ -31,21 +35,15 @@ const DEFAULT_CHUNK_UNITS = 2_000;
 const DEFAULT_INITIALIZATION_DEADLINE_MS = 10 * 60 * 1_000;
 const INITIALIZATION_TEXT = "初始化";
 const MAX_SEEN_INITIALIZATION_MESSAGE_IDS = 100;
-const VENDOR_UPSTREAM_COMMIT = "75d7db9338e133080fef9914b92ceb5e3ebd0dfc";
-const VENDOR_ARTIFACT_PATHS = [
-  "ilink/auth.js",
-  "ilink/client.js",
-  "utils/http.js",
-  "utils/logger.js",
-  "utils/crypto.js",
-] as const;
 
 const SecretString = z.string().min(1).max(16_384);
 const IdentifierString = z.string().min(1).max(1_024);
-const PositiveIntegerMessageId = z
-  .number()
-  .positive()
-  .refine((value) => Number.isInteger(value));
+const DecimalMessageId = z.preprocess((value) => {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
+    return String(value);
+  }
+  return value;
+}, z.string().regex(/^[1-9]\d{0,19}$/u));
 
 function validWechatBaseUrl(value: string): boolean {
   try {
@@ -90,7 +88,7 @@ const PendingContextSchema = z
     userId: IdentifierString,
     enrollmentStartedAtMs: z.number().int().positive().safe().optional(),
     seenInitializationMessageIds: z
-      .array(PositiveIntegerMessageId)
+      .array(DecimalMessageId)
       .max(MAX_SEEN_INITIALIZATION_MESSAGE_IDS)
       .default([]),
   })
@@ -103,10 +101,10 @@ const ReadyContextSchema = z
     userId: IdentifierString,
     contextToken: SecretString,
     capturedAt: z.string().datetime(),
-    initializationMessageId: PositiveIntegerMessageId,
+    initializationMessageId: DecimalMessageId,
     initializationCreateTimeMs: z.number().int().positive().safe(),
     seenInitializationMessageIds: z
-      .array(PositiveIntegerMessageId)
+      .array(DecimalMessageId)
       .max(MAX_SEEN_INITIALIZATION_MESSAGE_IDS)
       .default([]),
   })
@@ -116,24 +114,6 @@ const ContextSchema = z.discriminatedUnion("status", [
   PendingContextSchema,
   ReadyContextSchema,
 ]);
-
-const VendorArtifactManifestSchema = z
-  .object({
-    version: z.literal(1),
-    upstreamCommit: z.literal(VENDOR_UPSTREAM_COMMIT),
-    artifacts: z
-      .array(
-        z
-          .object({
-            path: z.enum(VENDOR_ARTIFACT_PATHS),
-            bytes: z.number().int().positive().max(1_000_000),
-            sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-          })
-          .strict(),
-      )
-      .length(VENDOR_ARTIFACT_PATHS.length),
-  })
-  .strict();
 
 type ReadyContext = z.infer<typeof ReadyContextSchema>;
 type ContextState = z.infer<typeof ContextSchema>;
@@ -297,7 +277,7 @@ function loadContextState(projectRoot: string): ContextState | null {
   return parsed.success ? parsed.data : null;
 }
 
-function boundedUniqueMessageIds(ids: readonly number[]): number[] {
+function boundedUniqueMessageIds(ids: readonly string[]): string[] {
   return [...new Set(ids)].slice(-MAX_SEEN_INITIALIZATION_MESSAGE_IDS);
 }
 
@@ -431,7 +411,10 @@ async function boundedJson(response: Response, maximumBytes: number): Promise<un
     throw new Error("微信接口响应超过安全大小限制");
   }
   try {
-    return JSON.parse(raw) as unknown;
+    const parse = createRequire(import.meta.url)("json-bigint") as (
+      options: { readonly storeAsString: boolean },
+    ) => { readonly parse: (text: string) => unknown };
+    return parse({ storeAsString: true }).parse(raw);
   } catch {
     throw new Error("微信接口返回了无效响应");
   }
@@ -439,7 +422,7 @@ async function boundedJson(response: Response, maximumBytes: number): Promise<un
 
 const UpdateMessageSchema = z
   .object({
-    message_id: PositiveIntegerMessageId,
+    message_id: DecimalMessageId,
     create_time_ms: z.number().int().positive().safe(),
     from_user_id: IdentifierString,
     message_type: z.number().int(),
@@ -504,7 +487,7 @@ async function waitForInitialization(options: {
   readonly signal?: AbortSignal;
   readonly now: () => Date;
   readonly enrollmentStartedAtMs: number;
-  readonly seenInitializationMessageIds: readonly number[];
+  readonly seenInitializationMessageIds: readonly string[];
   readonly onPollSummary?: (summary: WechatInitializationPollSummary) => void;
 }): Promise<void> {
   const paths = statePaths(options.projectRoot);
@@ -659,7 +642,7 @@ export async function initializeWechat(
     throw new RangeError("微信初始化等待时间必须为正整数");
   }
   const vendor =
-    options.vendor ?? (await loadVendorWechatAdapter(options.projectRoot));
+    options.vendor ?? loadWechatTransportAdapter();
   const now = options.now ?? (() => new Date());
   const enrollmentStartedAtMs = now().getTime();
   if (!Number.isFinite(enrollmentStartedAtMs)) {
@@ -749,7 +732,7 @@ export async function resumeWechatInitialization(
     throw new Error("微信初始化状态无效，请重新扫码");
   }
   const vendor =
-    options.vendor ?? (await loadVendorWechatAdapter(options.projectRoot));
+    options.vendor ?? loadWechatTransportAdapter();
   const now = options.now ?? (() => new Date());
   await waitForInitialization({
     projectRoot: options.projectRoot,
@@ -769,7 +752,7 @@ export async function resumeWechatInitialization(
 }
 
 /**
- * Mirrors cli-in-wechat's paragraph -> line -> space -> hard-cut segmentation.
+ * Uses paragraph -> line -> space -> hard-cut segmentation.
  * The upstream function is not exported, so this small compatibility copy is kept tested.
  */
 export function splitWechatText(
@@ -909,7 +892,7 @@ export async function prepareWechatTextSender(
 ): Promise<PreparedWechatTextSender> {
   const state = validatedBoundState(options.projectRoot);
   const vendor =
-    options.vendor ?? (await loadVendorWechatAdapter(options.projectRoot));
+    options.vendor ?? loadWechatTransportAdapter();
   return async (rawText: string) => {
     const text = rawText.trim();
     if (text.length === 0 || text.length > MAX_MESSAGE_UNITS) {
@@ -1182,7 +1165,7 @@ export async function prepareWechatImageSender(
 ): Promise<PreparedWechatImageSender> {
   const state = validatedBoundState(options.projectRoot);
   const vendor =
-    options.vendor ?? (await loadVendorWechatAdapter(options.projectRoot));
+    options.vendor ?? loadWechatTransportAdapter();
   return async (imagePath: string) =>
     await sendBoundWechatImage({
       projectRoot: options.projectRoot,
@@ -1206,116 +1189,11 @@ export async function sendWechatImage(
   return await sender(options.imagePath);
 }
 
-interface VendorAuthModule {
-  readonly login?: (
-    onQrCode: (qrContent: string) => void,
-  ) => Promise<unknown>;
-}
-
-interface VendorHttpModule {
-  readonly fetchWithRetry?: VendorWechatAdapter["fetchWithRetry"];
-}
-
-interface VendorCryptoModule {
-  readonly generateWechatUin?: () => string;
-}
-
-async function importVendorModule<T>(
-  projectRoot: string,
-  ...relativeSegments: readonly string[]
-): Promise<T> {
-  const filePath = resolveProjectPath(
-    projectRoot,
-    "vendor",
-    "cli-in-wechat",
-    "dist",
-    ...relativeSegments,
-  );
-  assertNoSymlinkComponents(projectRoot, filePath);
-  return (await import(pathToFileURL(filePath).href)) as T;
-}
-
-export function verifyVendorWechatArtifacts(projectRoot: string): void {
-  const manifestPath = resolveProjectPath(
-    projectRoot,
-    "config",
-    "vendor-wechat-artifacts.json",
-  );
-  const rawManifest = readProjectText(
-    projectRoot,
-    manifestPath,
-    32 * 1_024,
-  );
-  let manifestValue: unknown;
-  try {
-    manifestValue = rawManifest === null ? null : JSON.parse(rawManifest);
-  } catch {
-    throw new Error("cli-in-wechat runtime artifact integrity verification failed");
-  }
-  const parsed = VendorArtifactManifestSchema.safeParse(manifestValue);
-  if (!parsed.success) {
-    throw new Error("cli-in-wechat runtime artifact integrity verification failed");
-  }
-  const byPath = new Map(
-    parsed.data.artifacts.map((artifact) => [artifact.path, artifact]),
-  );
-  if (
-    byPath.size !== VENDOR_ARTIFACT_PATHS.length ||
-    VENDOR_ARTIFACT_PATHS.some((path) => !byPath.has(path))
-  ) {
-    throw new Error("cli-in-wechat runtime artifact integrity verification failed");
-  }
-  for (const path of VENDOR_ARTIFACT_PATHS) {
-    const artifact = byPath.get(path)!;
-    const filePath = resolveProjectPath(
-      projectRoot,
-      "vendor",
-      "cli-in-wechat",
-      "dist",
-      ...path.split("/"),
-    );
-    let source: string | null;
-    try {
-      assertNoSymlinkComponents(projectRoot, filePath);
-      const stat = lstatSync(filePath);
-      if (!stat.isFile() || stat.size !== artifact.bytes) {
-        throw new Error("invalid artifact");
-      }
-      source = readProjectText(projectRoot, filePath, artifact.bytes + 1);
-    } catch {
-      throw new Error("cli-in-wechat runtime artifact integrity verification failed");
-    }
-    if (
-      source === null ||
-      Buffer.byteLength(source, "utf8") !== artifact.bytes ||
-      createHash("sha256").update(source, "utf8").digest("hex") !==
-        artifact.sha256
-    ) {
-      throw new Error("cli-in-wechat runtime artifact integrity verification failed");
-    }
-  }
-}
-
-export async function loadVendorWechatAdapter(
-  projectRoot: string,
-): Promise<VendorWechatAdapter> {
-  verifyVendorWechatArtifacts(projectRoot);
-  const [auth, http, crypto] = await Promise.all([
-    importVendorModule<VendorAuthModule>(projectRoot, "ilink", "auth.js"),
-    importVendorModule<VendorHttpModule>(projectRoot, "utils", "http.js"),
-    importVendorModule<VendorCryptoModule>(projectRoot, "utils", "crypto.js"),
-  ]);
-  if (
-    typeof auth.login !== "function" ||
-    typeof http.fetchWithRetry !== "function" ||
-    typeof crypto.generateWechatUin !== "function"
-  ) {
-    throw new Error("cli-in-wechat 构建不完整，请先执行 vendor 构建");
-  }
+export function loadWechatTransportAdapter(): VendorWechatAdapter {
   return {
-    login: auth.login,
-    fetchWithRetry: http.fetchWithRetry,
-    generateWechatUin: crypto.generateWechatUin,
+    login: transportLogin,
+    fetchWithRetry: transportFetchWithRetry,
+    generateWechatUin: transportGenerateWechatUin,
   };
 }
 
@@ -1388,26 +1266,19 @@ export function renderWechatQr(projectRoot: string, content: string): string {
   if (content.length === 0 || content.length > 16_384) {
     throw new Error("微信二维码内容无效");
   }
-  const packagePath = resolveProjectPath(
-    projectRoot,
-    "vendor",
-    "cli-in-wechat",
-    "package.json",
-  );
-  assertNoSymlinkComponents(projectRoot, packagePath);
-  const vendorRequire = createRequire(packagePath);
+  const runtimeRequire = createRequire(import.meta.url);
   let qrcode: QrTerminalModule;
   let QrCode: QrCodeConstructor;
   try {
-    qrcode = vendorRequire("qrcode-terminal") as QrTerminalModule;
-    QrCode = vendorRequire(
+    qrcode = runtimeRequire("qrcode-terminal") as QrTerminalModule;
+    QrCode = runtimeRequire(
       "qrcode-terminal/vendor/QRCode",
     ) as QrCodeConstructor;
   } catch {
-    throw new Error("二维码渲染组件不可用，请先完成 vendor 依赖安装");
+    throw new Error("二维码渲染组件不可用，请重新安装项目依赖");
   }
   if (typeof qrcode.generate !== "function") {
-    throw new Error("二维码渲染组件不可用，请重新构建 vendor");
+    throw new Error("二维码渲染组件不可用，请重新安装项目依赖");
   }
   const encoded = new QrCode(-1, qrcode.error ?? 1);
   encoded.addData(content);

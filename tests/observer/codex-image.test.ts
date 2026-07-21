@@ -50,6 +50,7 @@ function project(): string {
   mkdirSync(join(root, "prompts"), { recursive: true });
   for (const relativePath of [
     "config/report-visual.yaml",
+    "config/security-profile.yaml",
     "config/report-image-output.schema.json",
     "prompts/editorial-hero.md",
   ]) {

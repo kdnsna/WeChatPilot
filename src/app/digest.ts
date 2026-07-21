@@ -197,16 +197,27 @@ export async function runDailyDigest(
   if (output === undefined) {
     throw new Error("Digest generation produced no validated output");
   }
-  output = await ensureAccessibleDigestLinks(output, bundle.candidates, {
-    date,
-    allowedUrls,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-    ...(options.linkProbe === undefined ? {} : { probe: options.linkProbe }),
-    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-    ...(options.linkHostnameResolver === undefined
-      ? {}
-      : { resolveHostname: options.linkHostnameResolver }),
-  });
+  const beforeLinkGate = output.sourceUrls;
+  try {
+    output = await ensureAccessibleDigestLinks(output, bundle.candidates, {
+      date,
+      allowedUrls,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.linkProbe === undefined ? {} : { probe: options.linkProbe }),
+      ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+      ...(options.linkHostnameResolver === undefined
+        ? {}
+        : { resolveHostname: options.linkHostnameResolver }),
+    });
+    await logger.info("digest link gate completed", {
+      replacements: output.sourceUrls.filter((url, index) => url !== beforeLinkGate[index]).length,
+    });
+  } catch (error) {
+    await logger.warn("digest link gate failed", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    throw error;
+  }
   const digestPath = join(paths.output, `${date}-digest.txt`);
   const jsonPath = join(paths.output, `${date}-digest.json`);
   writeProjectTextAtomic(options.projectRoot, digestPath, `${output.digest.trim()}\n`);

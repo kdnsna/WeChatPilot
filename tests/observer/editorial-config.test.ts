@@ -27,6 +27,7 @@ function fixtureRoot(): string {
   for (const name of [
     "report-visual.yaml",
     "report-image-output.schema.json",
+    "security-profile.yaml",
   ]) {
     copyFileSync(
       join(projectRoot, "config", name),
@@ -39,10 +40,19 @@ function fixtureRoot(): string {
 
 function mutateConfig(needle: string, replacement: string): string {
   const root = fixtureRoot();
-  const path = join(root, "config", "report-visual.yaml");
+  const path = join(
+    root,
+    "config",
+    needle.startsWith("mode:") ? "report-visual.yaml" : "security-profile.yaml",
+  );
   const original = readFileSync(path, "utf8");
   expect(original).toContain(needle);
-  writeFileSync(path, original.replace(needle, replacement), "utf8");
+  const index = original.lastIndexOf(needle);
+  writeFileSync(
+    path,
+    `${original.slice(0, index)}${replacement}${original.slice(index + needle.length)}`,
+    "utf8",
+  );
   return root;
 }
 
@@ -76,9 +86,8 @@ describe("editorial image configuration", () => {
       OPENAI_API_KEY: "must-not-reach-child",
     });
     expect(invocation.cwd).toBe(projectRoot);
-    expect(invocation.executable).toBe(
-      "/opt/homebrew/opt/node@22/bin/node",
-    );
+    expect(invocation.executable).toBe(config.codex.javascriptEntrypoint);
+    expect(config.codex.direct).toBe(true);
     expect(invocation.args).toContain("image_generation");
     expect(invocation.args).toContain("read-only");
     expect(invocation.args).not.toContain("danger-full-access");

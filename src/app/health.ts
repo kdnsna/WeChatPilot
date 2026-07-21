@@ -12,9 +12,9 @@ import {
   inspectRunDeliveryState,
 } from "../delivery/run-report-delivery.js";
 import {
-  verifyVendorWechatArtifacts,
   wechatHealth,
 } from "../delivery/wechat.js";
+import { WECHAT_TRANSPORT_RUNTIME_CLOSURE } from "../transport/wechat-transport.js";
 import { readProjectText } from "../lib/project-file.js";
 import {
   assertNoSymlinkComponents,
@@ -37,9 +37,6 @@ import {
   inspectRunState,
   listFinalRunReports,
 } from "../observer/run-state.js";
-
-export const EXPECTED_VENDOR_HEAD =
-  "75d7db9338e133080fef9914b92ceb5e3ebd0dfc";
 
 const MAX_LOCAL_TEXT_BYTES = 256 * 1_024;
 
@@ -82,7 +79,6 @@ export interface HealthProbes {
     options: HealthExecOptions,
   ) => string;
   readonly wechatHealth: (projectRoot: string) => WechatHealthBooleans;
-  readonly verifyVendorArtifacts: (projectRoot: string) => void;
   readonly loadObserverConfig: (projectRoot: string) => ObserverConfig;
   readonly rendererReady: () => boolean;
   readonly loadEditorialConfig: (projectRoot: string) => EditorialConfig;
@@ -124,13 +120,11 @@ export interface ProjectHealthReport {
     readonly promptReady: boolean;
     readonly outputSchemaReady: boolean;
   };
-  readonly vendor: {
+  readonly transport: {
     readonly status: CheckStatus;
-    readonly exactHead: boolean;
-    readonly artifactIntegrity: boolean;
-    readonly authModuleReady: boolean;
-    readonly httpModuleReady: boolean;
-    readonly cryptoModuleReady: boolean;
+    readonly minimalClosure: boolean;
+    readonly sourceReady: boolean;
+    readonly qrModuleReady: boolean;
   };
   readonly directories: {
     readonly status: CheckStatus;
@@ -239,7 +233,6 @@ const defaultProbes: HealthProbes = {
       },
     }).trim(),
   wechatHealth,
-  verifyVendorArtifacts: verifyVendorWechatArtifacts,
   loadObserverConfig,
   rendererReady: defaultRendererReady,
   loadEditorialConfig,
@@ -354,68 +347,25 @@ export function inspectProjectHealth(
     outputSchemaReady,
   } as const;
 
-  const vendorRoot = safeLocalPath(paths.root, "vendor", "cli-in-wechat");
-  const exactHead = safeProbe(
-    () =>
-      probes.execFile("/usr/bin/git", ["rev-parse", "HEAD"], { cwd: vendorRoot }).trim() ===
-      EXPECTED_VENDOR_HEAD,
+  const sourceReady = probes.fileReadable(
+    safeLocalPath(paths.root, "src", "transport", "wechat-transport.ts"),
   );
-  const artifactIntegrity = safeProbe(() => {
-    probes.verifyVendorArtifacts(paths.root);
+  const minimalClosure =
+    WECHAT_TRANSPORT_RUNTIME_CLOSURE.length === 2 &&
+    !WECHAT_TRANSPORT_RUNTIME_CLOSURE.some((entry) => /undici|proxy|router|adapter/iu.test(entry));
+  const qrModuleReady = safeProbe(() => {
+    createRequire(import.meta.url).resolve("qrcode-terminal");
     return true;
   });
-  const authModuleReady = safeProbe(() =>
-    probes.fileReadable(
-      safeLocalPath(
-        paths.root,
-        "vendor",
-        "cli-in-wechat",
-        "dist",
-        "ilink",
-        "auth.js",
-      ),
-    ),
-  );
-  const httpModuleReady = safeProbe(() =>
-    probes.fileReadable(
-      safeLocalPath(
-        paths.root,
-        "vendor",
-        "cli-in-wechat",
-        "dist",
-        "utils",
-        "http.js",
-      ),
-    ),
-  );
-  const cryptoModuleReady = safeProbe(() =>
-    probes.fileReadable(
-      safeLocalPath(
-        paths.root,
-        "vendor",
-        "cli-in-wechat",
-        "dist",
-        "utils",
-        "crypto.js",
-      ),
-    ),
-  );
-  const vendorReady =
-    exactHead &&
-    artifactIntegrity &&
-    authModuleReady &&
-    httpModuleReady &&
-    cryptoModuleReady;
-  if (!vendorReady) {
-    diagnostics.push("vendor pin or build check failed");
+  const transportReady = sourceReady && minimalClosure && qrModuleReady;
+  if (!transportReady) {
+    diagnostics.push("WeChat transport boundary check failed");
   }
-  const vendor = {
-    status: status(vendorReady),
-    exactHead,
-    artifactIntegrity,
-    authModuleReady,
-    httpModuleReady,
-    cryptoModuleReady,
+  const transport = {
+    status: status(transportReady),
+    minimalClosure,
+    sourceReady,
+    qrModuleReady,
   } as const;
 
   const dataWritable = safeProbe(() => {
@@ -663,7 +613,7 @@ export function inspectProjectHealth(
   const requiredReady =
     runtime.status === "ok" &&
     config.status === "ok" &&
-    vendor.status === "ok" &&
+    transport.status === "ok" &&
     directories.status === "ok" &&
     codex.status === "ok" &&
     observer.status === "ok";
@@ -679,7 +629,7 @@ export function inspectProjectHealth(
     requiredReady,
     runtime,
     config,
-    vendor,
+    transport,
     directories,
     codex,
     wechat,

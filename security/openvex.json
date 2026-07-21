@@ -1,0 +1,38 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/kdnsna/WeChatPilot/security/openvex/2026-07-21",
+  "author": "WeChatPilot maintainers",
+  "role": "Document Creator",
+  "timestamp": "2026-07-21T00:00:00+08:00",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": { "name": "GHSA-vxpw-j846-p89q" },
+      "products": [{ "@id": "pkg:github/kdnsna/WeChatPilot" }],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "The cli-in-wechat submodule and undici dependency were removed. Runtime WeChat transport imports only node:crypto and uses the Node fetch implementation. Reintroducing cli-in-wechat, undici, proxy initialization, an upstream main entrypoint, router, or adapter registry invalidates this statement and is blocked by CI."
+    },
+    {
+      "vulnerability": { "name": "GHSA-p88m-4jfj-68fv" },
+      "products": [{ "@id": "pkg:github/kdnsna/WeChatPilot" }],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "undici is absent from the installed dependency graph and the reviewed WeChat runtime closure."
+    },
+    {
+      "vulnerability": { "name": "GHSA-35p6-xmwp-9g52" },
+      "products": [{ "@id": "pkg:github/kdnsna/WeChatPilot" }],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "undici is absent from the installed dependency graph and the reviewed WeChat runtime closure."
+    },
+    {
+      "vulnerability": { "name": "GHSA-g8m3-5g58-fq7m" },
+      "products": [{ "@id": "pkg:github/kdnsna/WeChatPilot" }],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "undici is absent from the installed dependency graph and the reviewed WeChat runtime closure."
+    }
+  ]
+}

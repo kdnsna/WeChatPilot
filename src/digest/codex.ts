@@ -117,9 +117,9 @@ export function buildCodexInvocation(
     }
   }
   return {
-    executable: config.nodeExecutable,
+    executable: config.direct ? config.javascriptEntrypoint : config.nodeExecutable,
     args: [
-      config.javascriptEntrypoint,
+      ...(config.direct ? [] : [config.javascriptEntrypoint]),
       ...configuredArguments.map((argument) =>
         expandProjectRoot(argument, projectRoot),
       ),

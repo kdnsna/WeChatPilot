@@ -19,6 +19,7 @@ import {
   assertNoSymlinkComponents,
   resolveProjectPath,
 } from "../lib/paths.js";
+import { readProjectText, writeProjectTextAtomic } from "../lib/project-file.js";
 
 const MAX_LOCK_BYTES = 4 * 1_024;
 
@@ -46,13 +47,17 @@ export interface ScheduledRunLock {
 
 export interface AcquireScheduledRunLockOptions {
   readonly projectRoot: string;
+  readonly lockName?: string;
   readonly pid?: number;
   readonly isProcessAlive?: (pid: number) => boolean;
   readonly now?: () => Date;
 }
 
-function scheduledLockPath(projectRoot: string): string {
-  return resolveProjectPath(projectRoot, ".state", "locks", "scheduled.lock");
+function scheduledLockPath(projectRoot: string, lockName: string): string {
+  if (!/^(?:scheduled|delivery-\d{4}-\d{2}-\d{2})\.lock$/u.test(lockName)) {
+    throw new RangeError("scheduled lock name is invalid");
+  }
+  return resolveProjectPath(projectRoot, ".state", "locks", lockName);
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -136,6 +141,19 @@ function removeStaleLock(
   }
 }
 
+function recordStaleRecovery(projectRoot: string): void {
+  const path = resolveProjectPath(projectRoot, ".state", "stability-metrics.json");
+  let current = { staleLockRecoveries: 0, manualInterventions: 0 };
+  try {
+    const raw = readProjectText(projectRoot, path, 4_096);
+    if (raw !== null) current = { ...current, ...(JSON.parse(raw) as object) };
+  } catch { /* Start a fresh non-sensitive counter document. */ }
+  writeProjectTextAtomic(projectRoot, path, `${JSON.stringify({
+    staleLockRecoveries: Number.isSafeInteger(current.staleLockRecoveries) ? current.staleLockRecoveries + 1 : 1,
+    manualInterventions: Number.isSafeInteger(current.manualInterventions) ? current.manualInterventions : 0,
+  })}\n`);
+}
+
 export async function acquireScheduledRunLock(
   options: AcquireScheduledRunLockOptions,
 ): Promise<ScheduledRunLock> {
@@ -150,7 +168,10 @@ export async function acquireScheduledRunLock(
   }
   const processAlive = options.isProcessAlive ?? isProcessAlive;
   const parent = resolveProjectPath(options.projectRoot, ".state", "locks");
-  const filePath = scheduledLockPath(options.projectRoot);
+  const filePath = scheduledLockPath(
+    options.projectRoot,
+    options.lockName ?? "scheduled.lock",
+  );
   mkdirSync(parent, { recursive: true, mode: 0o700 });
   assertNoSymlinkComponents(options.projectRoot, filePath);
   chmodSync(parent, 0o700);
@@ -193,6 +214,7 @@ export async function acquireScheduledRunLock(
         throw new ScheduledRunBusyError();
       }
       removeStaleLock(options.projectRoot, filePath, existing.identity);
+      recordStaleRecovery(options.projectRoot);
     }
   }
   if (descriptor === undefined) {

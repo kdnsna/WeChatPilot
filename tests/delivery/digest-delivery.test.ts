@@ -1,8 +1,11 @@
 import {
+  chmodSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -155,6 +158,28 @@ describe("daily digest delivery ledger", () => {
     release?.();
     await first;
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers a dead delivery lock and preserves ledger-based duplicate safety", async () => {
+    const root = project();
+    const lockDirectory = join(root, ".state", "locks");
+    mkdirSync(lockDirectory, { recursive: true, mode: 0o700 });
+    chmodSync(join(root, ".state"), 0o700);
+    writeFileSync(join(lockDirectory, `delivery-${DATE}.lock`), `${JSON.stringify({
+      pid: 9_999_999,
+      nonce: "crashed-owner",
+      createdAt: NOW.toISOString(),
+    })}\n`, { mode: 0o600 });
+    const send = vi.fn(async () => ({ status: "sent" as const, chunks: 1 }));
+
+    await expect(deliverDailyDigest({
+      projectRoot: root,
+      date: DATE,
+      digest: DIGEST,
+      send,
+      now: () => NOW,
+    })).resolves.toMatchObject({ status: "sent" });
+    expect(send).toHaveBeenCalledOnce();
   });
 
   it("allows at most one initial attempt plus two definite-failure retries", async () => {

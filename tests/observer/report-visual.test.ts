@@ -33,6 +33,7 @@ function project(): string {
   const root = mkdtempSync(join(tmpdir(), "wechat-visual-ledger-"));
   for (const relativePath of [
     "config/report-visual.yaml",
+    "config/security-profile.yaml",
     "config/report-image-output.schema.json",
     "prompts/editorial-hero.md",
   ]) {

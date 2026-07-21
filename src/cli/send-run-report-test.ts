@@ -439,7 +439,7 @@ function projectRootFromArguments(arguments_: readonly string[]): string {
     arguments_.length === 2 &&
     arguments_[0] === "--project-root" &&
     arguments_[1] !== undefined &&
-    isAbsolute(arguments_[1])
+    arguments_[1].trim() !== ""
   ) {
     return resolve(arguments_[1]);
   }

@@ -44,7 +44,7 @@ describe('WeChatPilot public identity', () => {
       readProjectFile('README.md'),
       readProjectFile('package.json'),
       readProjectFile('.github/ISSUE_TEMPLATE/config.yml'),
-      readProjectFile('launchd/com.kdnsna.daily-tech-digest.plist'),
+      readProjectFile('launchd/io.wechatpilot.daily-tech-digest.plist'),
     ]);
     const packageJson = JSON.parse(packageText) as Record<string, unknown>;
 
@@ -57,8 +57,8 @@ describe('WeChatPilot public identity', () => {
       url: 'git+https://github.com/kdnsna/WeChatPilot.git',
     });
     expect(issueConfig).toContain('github.com/kdnsna/WeChatPilot/');
-    expect(launchd).toContain('com.kdnsna.daily-tech-digest');
-    expect(launchd).not.toContain('com.kdnsna.wechatpilot');
+    expect(launchd).toContain('io.wechatpilot.daily-tech-digest');
+    expect(launchd).not.toContain('io.wechatpilot');
   });
 });
 ```
@@ -68,8 +68,8 @@ describe('WeChatPilot public identity', () => {
 Run:
 
 ```sh
-PATH=/opt/homebrew/opt/node@22/bin:/usr/bin:/bin \
-  /opt/homebrew/opt/node@22/bin/node \
+PATH=/path/to/node-bin:/usr/bin:/bin \
+  /path/to/node \
   node_modules/vitest/vitest.mjs run tests/project/branding.test.ts
 ```
 
@@ -133,7 +133,7 @@ contact_links:
 
 Run the Task 1 command again.
 
-Expected: 1 test file passed; the public brand is WeChatPilot and the deployed LaunchAgent label remains `com.kdnsna.daily-tech-digest`.
+Expected: 1 test file passed; the public brand is WeChatPilot and the deployed LaunchAgent label remains `io.wechatpilot.daily-tech-digest`.
 
 ### Task 3: Validate GitHub repository controls
 
@@ -150,7 +150,7 @@ Expected: 1 test file passed; the public brand is WeChatPilot and the deployed L
 Run:
 
 ```sh
-/opt/homebrew/opt/node@22/bin/node --input-type=module -e '
+/path/to/node --input-type=module -e '
 import fs from "node:fs";
 import YAML from "yaml";
 for (const path of [
@@ -186,14 +186,14 @@ Expected: all policies and commands are found; no floating action tag appears.
 Run:
 
 ```sh
-PATH=/opt/homebrew/opt/node@22/bin:/usr/bin:/bin \
-  /opt/homebrew/opt/node@22/bin/node \
-  /opt/homebrew/opt/node@22/lib/node_modules/npm/bin/npm-cli.js test
-/opt/homebrew/opt/node@22/bin/node node_modules/typescript/bin/tsc --noEmit
-/opt/homebrew/opt/node@22/bin/node node_modules/typescript/bin/tsc --noEmit false --outDir dist
-PATH=/opt/homebrew/opt/node@22/bin:/usr/bin:/bin \
-  /opt/homebrew/opt/node@22/bin/node \
-  /opt/homebrew/opt/node@22/lib/node_modules/npm/bin/npm-cli.js \
+PATH=/path/to/node-bin:/usr/bin:/bin \
+  /path/to/node \
+  npm test
+/path/to/node node_modules/typescript/bin/tsc --noEmit
+/path/to/node node_modules/typescript/bin/tsc --noEmit false --outDir dist
+PATH=/path/to/node-bin:/usr/bin:/bin \
+  /path/to/node \
+  npm \
   --prefix vendor/cli-in-wechat test
 ```
 
@@ -205,7 +205,7 @@ Run:
 
 ```sh
 git -C vendor/cli-in-wechat rev-parse HEAD
-/usr/bin/plutil -lint launchd/com.kdnsna.daily-tech-digest.plist
+/usr/bin/plutil -lint launchd/io.wechatpilot.daily-tech-digest.plist
 ```
 
 Expected: commit `75d7db9338e133080fef9914b92ceb5e3ebd0dfc` and `OK`.

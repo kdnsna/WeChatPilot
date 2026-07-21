@@ -1,12 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-TARGET_PLIST="/Users/kdnsna/Library/LaunchAgents/com.kdnsna.daily-tech-digest.plist"
-CURRENT_USER_ID="$(/usr/bin/id -u)"
-
-if [[ -e "${TARGET_PLIST}" ]]; then
-  /bin/launchctl bootout "gui/${CURRENT_USER_ID}" "${TARGET_PLIST}" 2>/dev/null || true
-  /bin/rm -f -- "${TARGET_PLIST}"
-fi
-
-/bin/echo "LaunchAgent 已卸载；项目、日报、日志和微信登录状态均未删除。"
+SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && /bin/pwd -P)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && /bin/pwd -P)"
+NODE_EXECUTABLE="${NODE_EXECUTABLE:-$(command -v node)}"
+exec "${NODE_EXECUTABLE}" --import tsx "${PROJECT_ROOT}/src/cli/wechatpilot.ts" schedule remove --project-root "${PROJECT_ROOT}"

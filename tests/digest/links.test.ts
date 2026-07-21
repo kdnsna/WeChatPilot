@@ -387,6 +387,28 @@ describe("digest source-link accessibility", () => {
     expect(resolved).toEqual(["start.test", "final.test"]);
   });
 
+  it("pins the validated address into the actual connection to close DNS rebinding", async () => {
+    const resolver = vi.fn<PublicHostnameResolver>(async () => ["93.184.216.34"]);
+    const pinned = vi.fn(async (
+      url: URL,
+      addresses: readonly string[],
+      init: RequestInit,
+    ) => {
+      expect(url.hostname).toBe("public-name.test");
+      expect(addresses).toEqual(["93.184.216.34"]);
+      expect(init.redirect).toBe("manual");
+      return new Response(null, { status: 204 });
+    });
+
+    await expect(
+      createPublicLinkProbe(undefined, resolver, pinned)(
+        "https://public-name.test/article",
+      ),
+    ).resolves.toBe(true);
+    expect(resolver).toHaveBeenCalledOnce();
+    expect(pinned).toHaveBeenCalledOnce();
+  });
+
   it("blocks a hostname resolving to a private address before fetching", async () => {
     const fetch = vi.fn<FetchLike>(async () => new Response(null, { status: 200 }));
     const resolver: PublicHostnameResolver = async () => ["10.0.0.7"];

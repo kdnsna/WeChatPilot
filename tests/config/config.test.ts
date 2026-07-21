@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -25,14 +26,14 @@ const requiredForbiddenCodexArgs = [
   "--skip-git-repo-check",
 ] as const;
 
-type ConfigFileName = "sources.yaml" | "ranking.yaml" | "digest.yaml";
+type ConfigFileName = "sources.yaml" | "ranking.yaml" | "digest.yaml" | "security-profile.yaml";
 
 function copyConfigFixture(): string {
   const root = mkdtempSync(join(tmpdir(), "daily-tech-digest-config-"));
   const configDirectory = join(root, "config");
   mkdirSync(configDirectory);
 
-  for (const name of ["sources.yaml", "ranking.yaml", "digest.yaml"]) {
+  for (const name of ["sources.yaml", "ranking.yaml", "digest.yaml", "security-profile.yaml"]) {
     copyFileSync(join(projectRoot, "config", name), join(configDirectory, name));
   }
 
@@ -179,14 +180,13 @@ describe("loadConfig", () => {
     expect(sources.reddit.url).toContain("technology+programming");
   });
 
-  it("defines only the verified safe Codex 0.144.4 invocation", () => {
+  it("resolves the detected Codex runtime while preserving the verified security profile", () => {
     const { codex } = loadConfig(projectRoot).digest;
 
-    expect(codex.nodeExecutable).toBe("/opt/homebrew/opt/node@22/bin/node");
-    expect(codex.javascriptEntrypoint).toBe(
-      "/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js",
-    );
-    expect(codex.version).toBe("0.144.4");
+    expect(codex.nodeExecutable).toBe(realpathSync(process.execPath));
+    expect(codex.javascriptEntrypoint).toMatch(/^\//u);
+    expect(codex.direct).toBe(true);
+    expect(codex.version).toBe("detected");
     expect(codex.command).toBe("exec");
     expect(codex.globalArgs).toEqual([
       "--search",
@@ -250,7 +250,7 @@ describe("loadConfig", () => {
     const root = copyConfigFixture();
     replaceInConfig(
       root,
-      "digest.yaml",
+      "security-profile.yaml",
       "  command: exec\n",
       `    - ${unsafeArg}\n  command: exec\n`,
     );
@@ -262,7 +262,7 @@ describe("loadConfig", () => {
 
   it("rejects an extra sandbox argument that could override read-only mode", () => {
     const root = copyConfigFixture();
-    const digestPath = join(root, "config", "digest.yaml");
+    const digestPath = join(root, "config", "security-profile.yaml");
     const safeDigest = readFileSync(digestPath, "utf8");
     const unsafeDigest = safeDigest.replace(
       "    - read-only\n",
@@ -379,9 +379,9 @@ describe("loadConfig", () => {
     },
     {
       boundary: "digest Codex settings",
-      name: "digest.yaml",
-      needle: "codex:\n",
-      replacement: "codex:\n  unknownCodexField: true\n",
+      name: "security-profile.yaml",
+      needle: "digestCodex:\n",
+      replacement: "digestCodex:\n  unknownCodexField: true\n",
     },
   ] as const)("rejects unknown keys at the $boundary boundary", ({ name, needle, replacement }) => {
     const root = copyConfigFixture();

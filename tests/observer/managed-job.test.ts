@@ -17,7 +17,7 @@ const job: ObserverJob = {
   id: "daily-tech-digest",
   name: "每日科技情报",
   projectLabel: "WeChatPilot",
-  executable: "/opt/homebrew/opt/node@22/bin/node",
+  executable: "/path/to/node",
   entrypoint: "dist/src/cli/scheduled.js",
   arguments: ["--project-root", "{projectRoot}"],
   workingDirectory: ".",

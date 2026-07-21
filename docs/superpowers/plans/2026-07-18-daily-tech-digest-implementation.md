@@ -19,7 +19,7 @@
 - Test: `tests/config/config.test.ts`, `tests/security/redaction.test.ts`
 
 - [ ] Write configuration and redaction tests that import wished-for `loadConfig` and `redactSecrets` APIs.
-- [ ] Run `/opt/homebrew/opt/node@22/bin/npm test -- tests/config/config.test.ts tests/security/redaction.test.ts` and confirm failure because the APIs do not exist.
+- [ ] Run `npm test -- tests/config/config.test.ts tests/security/redaction.test.ts` and confirm failure because the APIs do not exist.
 - [ ] Implement minimal schema-validated configuration loading and recursive secret redaction.
 - [ ] Re-run the focused tests, then the full test suite.
 
@@ -135,13 +135,13 @@
 ### Task 11: LaunchAgent generation without loading
 
 **Files:**
-- Create: `launchd/com.kdnsna.tech-digest.plist.template`
+- Create: `launchd/io.wechatpilot.tech-digest.plist.template`
 - Create: `scripts/render-launchd.ts`, `scripts/uninstall-launchd.ts`
 - Test: `tests/launchd/render.test.ts`
 
 - [ ] Write tests for 08:00 calendar fields, `RunAtLoad`, absolute paths, current-user operation, log paths, and absence of `sudo`, root, `KeepAlive`, or shell-dependent PATH lookup.
 - [ ] Run focused tests and confirm failures.
-- [ ] Implement deterministic rendering using detected `/opt/homebrew/opt/node@22/bin/node`, `/opt/homebrew/bin/codex`, `/bin/zsh`, and the absolute project path.
+- [ ] Implement deterministic rendering using detected `/path/to/node`, `codex`, `/bin/zsh`, and the absolute project path.
 - [ ] Render the plist and validate it with `/usr/bin/plutil -lint`; do not call `launchctl load` or `bootstrap`.
 
 ### Task 12: Local dry run and manual acceptance gate

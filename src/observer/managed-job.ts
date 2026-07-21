@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn as nodeSpawn } from "node:child_process";
+import { basename } from "node:path";
 import type { Readable } from "node:stream";
 
 import { resolveProjectPath } from "../lib/paths.js";
@@ -208,6 +209,9 @@ function auditedInvocation(options: RunManagedJobOptions): {
 } {
   try {
     const job = ObserverJobSchema.parse(options.job);
+    if (!/^node(?:\d+)?$/u.test(basename(job.executable))) {
+      throw safeError();
+    }
     const projectRoot = resolveProjectPath(options.projectRoot, ".");
     const cwd = resolveProjectPath(projectRoot, job.workingDirectory);
     const entrypoint = resolveProjectPath(projectRoot, job.entrypoint);

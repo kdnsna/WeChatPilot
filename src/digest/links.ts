@@ -1,4 +1,6 @@
 import { lookup, Resolver } from "node:dns/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 
 import type { FetchLike } from "../lib/http.js";
@@ -22,6 +24,12 @@ export type PublicHostnameResolver = (
   hostname: string,
   signal?: AbortSignal,
 ) => Promise<readonly string[]>;
+
+export type PinnedLinkRequest = (
+  url: URL,
+  addresses: readonly string[],
+  init: RequestInit,
+) => Promise<Response>;
 
 export interface DefaultHostnameResolverDependencies {
   readonly systemLookup?: PublicHostnameResolver;
@@ -222,26 +230,76 @@ export function createDefaultHostnameResolver(
   };
 }
 
-async function resolvesOnlyToPublicAddresses(
+async function resolvePublicAddresses(
   url: URL,
   resolver: PublicHostnameResolver,
   signal: AbortSignal,
-): Promise<boolean> {
+): Promise<readonly string[] | null> {
   const hostname = normalizedHostname(url);
   if (isIP(hostname) !== 0) {
-    return isPublicIpAddress(hostname);
+    return isPublicIpAddress(hostname) ? [hostname] : null;
   }
   let addresses: readonly string[];
   try {
     addresses = await resolver(hostname, signal);
   } catch {
-    return false;
+    return null;
   }
   if (signal.aborted) {
     throw abortedError();
   }
-  return addresses.length > 0 && addresses.every(isPublicIpAddress);
+  return addresses.length > 0 && addresses.every(isPublicIpAddress)
+    ? [...new Set(addresses)]
+    : null;
 }
+
+export const pinnedLinkRequest: PinnedLinkRequest = async (
+  url,
+  addresses,
+  init,
+) => await new Promise<Response>((resolve, reject) => {
+  const selected = addresses[0];
+  const family = selected === undefined ? 0 : isIP(selected);
+  if (selected === undefined || family === 0) {
+    reject(new Error("No validated address"));
+    return;
+  }
+  const headers = new Headers(init.headers);
+  headers.delete("authorization");
+  headers.delete("cookie");
+  const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
+    method: init.method ?? "GET",
+    headers: Object.fromEntries(headers.entries()),
+    signal: init.signal ?? undefined,
+    servername: url.protocol === "https:" && isIP(url.hostname) === 0
+      ? url.hostname
+      : undefined,
+    lookup: (_hostname, options, callback) => {
+      if (typeof options === "object" && options.all === true) {
+        callback(null, [{ address: selected, family }]);
+      } else {
+        callback(null, selected, family);
+      }
+    },
+  }, (incoming) => {
+    const responseHeaders = new Headers();
+    for (const [name, value] of Object.entries(incoming.headers)) {
+      if (Array.isArray(value)) {
+        for (const entry of value) responseHeaders.append(name, entry);
+      } else if (value !== undefined) {
+        responseHeaders.set(name, value);
+      }
+    }
+    incoming.destroy();
+    resolve(new Response(null, {
+      status: incoming.statusCode ?? 500,
+      statusText: incoming.statusMessage ?? "",
+      headers: responseHeaders,
+    }));
+  });
+  request.once("error", reject);
+  request.end();
+});
 
 async function discardBody(response: Response): Promise<void> {
   try {
@@ -253,9 +311,10 @@ async function discardBody(response: Response): Promise<void> {
 
 async function probeRedirectChain(
   initialUrl: string,
-  fetchImplementation: FetchLike,
+  fetchImplementation: FetchLike | undefined,
   resolver: PublicHostnameResolver,
   signal: AbortSignal,
+  pinnedRequest: PinnedLinkRequest,
 ): Promise<boolean> {
   let currentUrl = initialUrl;
   for (
@@ -267,19 +326,23 @@ async function probeRedirectChain(
       return false;
     }
     const parsedUrl = new URL(currentUrl);
-    if (!(await resolvesOnlyToPublicAddresses(parsedUrl, resolver, signal))) {
+    const addresses = await resolvePublicAddresses(parsedUrl, resolver, signal);
+    if (addresses === null) {
       return false;
     }
     if (signal.aborted) {
       return false;
     }
 
-    const response = await fetchImplementation(currentUrl, {
+    const init: RequestInit = {
       method: "GET",
       credentials: "omit",
       redirect: "manual",
       signal,
-    });
+    };
+    const response = fetchImplementation === undefined
+      ? await pinnedRequest(parsedUrl, addresses, init)
+      : await fetchImplementation(currentUrl, init);
     const isRedirect = response.status >= 300 && response.status < 400;
     const location = isRedirect ? response.headers.get("location") : null;
     const isAccepted = response.status >= 200 && response.status < 400;
@@ -303,8 +366,9 @@ async function probeRedirectChain(
 }
 
 export function createPublicLinkProbe(
-  fetchImplementation: FetchLike = globalThis.fetch,
+  fetchImplementation?: FetchLike,
   resolveHostname: PublicHostnameResolver = createDefaultHostnameResolver(),
+  pinnedRequest: PinnedLinkRequest = pinnedLinkRequest,
 ): DigestLinkProbe {
   return async (url, signal) => {
     if (signalIsAborted(signal)) {
@@ -345,6 +409,7 @@ export function createPublicLinkProbe(
           fetchImplementation,
           resolveHostname,
           controller.signal,
+          pinnedRequest,
         ),
         timeoutPromise,
         abortPromise,

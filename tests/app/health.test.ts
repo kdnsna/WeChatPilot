@@ -5,7 +5,6 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  EXPECTED_VENDOR_HEAD,
   healthExitCode,
   inspectProjectHealth,
   type HealthProbes,
@@ -34,7 +33,7 @@ const OBSERVER_CONFIG: ObserverConfig = {
       id: "daily-tech-digest",
       name: "每日科技情报",
       projectLabel: "WeChatPilot",
-      executable: "/opt/homebrew/opt/node@22/bin/node",
+      executable: "/path/to/node",
       entrypoint: "dist/src/cli/scheduled.js",
       arguments: ["--project-root", "{projectRoot}"],
       workingDirectory: ".",
@@ -70,11 +69,7 @@ function healthyProbes(
     fileReadable: () => true,
     fileExecutable: () => true,
     directoryWritable: () => true,
-    execFile: (executable, arguments_) =>
-      executable === "/usr/bin/git" && arguments_[0] === "rev-parse"
-        ? EXPECTED_VENDOR_HEAD
-        : "v22.23.1",
-    verifyVendorArtifacts: () => true,
+    execFile: () => "v22.23.1",
     wechatHealth: () => ({
       credentialsReady: false,
       ownerBound: false,
@@ -137,9 +132,7 @@ describe("project health", () => {
       },
       execFile: (executable, arguments_, options) => {
         execCalls.push({ executable, arguments: arguments_, cwd: options.cwd });
-        return executable === "/usr/bin/git"
-          ? EXPECTED_VENDOR_HEAD
-          : "v22.23.1";
+        return "v22.23.1";
       },
     });
 
@@ -155,13 +148,11 @@ describe("project health", () => {
         promptReady: true,
         outputSchemaReady: true,
       },
-      vendor: {
+      transport: {
         status: "ok",
-        exactHead: true,
-        artifactIntegrity: true,
-        authModuleReady: true,
-        httpModuleReady: true,
-        cryptoModuleReady: true,
+        minimalClosure: true,
+        sourceReady: true,
+        qrModuleReady: true,
       },
       directories: {
         status: "ok",
@@ -209,9 +200,7 @@ describe("project health", () => {
     expect(readablePaths).toEqual(
       expect.arrayContaining([
         CODEX_ENTRYPOINT,
-        join(root, "vendor", "cli-in-wechat", "dist", "ilink", "auth.js"),
-        join(root, "vendor", "cli-in-wechat", "dist", "utils", "http.js"),
-        join(root, "vendor", "cli-in-wechat", "dist", "utils", "crypto.js"),
+        join(root, "src", "transport", "wechat-transport.ts"),
       ]),
     );
     expect(
@@ -221,11 +210,6 @@ describe("project health", () => {
     ).toBe(true);
     expect(execCalls).toEqual(
       expect.arrayContaining([
-        {
-          executable: "/usr/bin/git",
-          arguments: ["rev-parse", "HEAD"],
-          cwd: join(root, "vendor", "cli-in-wechat"),
-        },
         {
           executable: NODE_EXECUTABLE,
           arguments: ["--version"],
@@ -290,7 +274,7 @@ describe("project health", () => {
     expect(report.status).toBe("failed");
     expect(report.requiredReady).toBe(false);
     expect(report.runtime).toEqual({ status: "failed", node22: false });
-    expect(report.vendor).toMatchObject({ status: "failed", exactHead: false });
+    expect(report.transport).toMatchObject({ status: "ok", minimalClosure: true });
     expect(report.directories).toMatchObject({
       status: "failed",
       logsWritable: false,

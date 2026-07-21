@@ -3,13 +3,14 @@ import { join } from "node:path";
 
 import { parse } from "yaml";
 import { z } from "zod";
+import { resolveRuntime, resolveRuntimePlaceholders } from "../config/runtime.js";
 
 export const ObserverJobSchema = z
   .object({
     id: z.literal("daily-tech-digest"),
     name: z.literal("每日科技情报"),
     projectLabel: z.literal("WeChatPilot"),
-    executable: z.literal("/opt/homebrew/opt/node@22/bin/node"),
+    executable: z.string().refine((value) => value === "{nodeExecutable}" || value.startsWith("/")),
     entrypoint: z.literal("dist/src/cli/scheduled.js"),
     arguments: z.tuple([
       z.literal("--project-root"),
@@ -19,7 +20,7 @@ export const ObserverJobSchema = z
     timeoutMs: z.number().int().min(1_000).max(1_800_000),
     resultAdapter: z.literal("scheduled-digest-json-v1"),
     allowedArtifactRoot: z.literal("output"),
-    notify: z.literal("always"),
+    notify: z.enum(["always", "on-failure", "never"]),
   })
   .strict();
 
@@ -41,7 +42,10 @@ export function loadObserverConfig(projectRoot: string): ObserverConfig {
   try {
     const path = join(projectRoot, "config", "observer-jobs.yaml");
     const document = parse(readFileSync(path, "utf8")) as unknown;
-    return ObserverConfigSchema.parse(document);
+    return resolveRuntimePlaceholders(
+      ObserverConfigSchema.parse(document),
+      resolveRuntime(),
+    );
   } catch {
     const error = new Error("Invalid observer configuration");
     error.stack = `${error.name}: ${error.message}`;

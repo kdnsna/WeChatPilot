@@ -1,17 +1,17 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
-  closeSync,
-  constants,
-  fsyncSync,
   lstatSync,
   mkdirSync,
-  openSync,
-  unlinkSync,
-  writeFileSync,
 } from "node:fs";
 
 import { z } from "zod";
+
+import {
+  acquireScheduledRunLock,
+  ScheduledRunBusyError,
+  type ScheduledRunLock,
+} from "../app/scheduled-lock.js";
 
 import { readProjectText, writeProjectTextAtomic } from "../lib/project-file.js";
 import {
@@ -112,15 +112,6 @@ function ledgerPath(projectRoot: string, date: string): string {
   return resolveProjectPath(projectRoot, ".state", "delivery", `${date}.json`);
 }
 
-function lockPath(projectRoot: string, date: string): string {
-  return resolveProjectPath(
-    projectRoot,
-    ".state",
-    "locks",
-    `delivery-${date}.lock`,
-  );
-}
-
 function readLedger(projectRoot: string, date: string): DeliveryLedger | null {
   const filePath = ledgerPath(projectRoot, date);
   const raw = readProjectText(projectRoot, filePath, MAX_LEDGER_BYTES);
@@ -152,57 +143,21 @@ function writeLedger(projectRoot: string, ledger: DeliveryLedger): void {
   );
 }
 
-function acquireLock(projectRoot: string, date: string): () => void {
-  const filePath = lockPath(projectRoot, date);
-  const parent = resolveProjectPath(projectRoot, ".state", "locks");
-  mkdirSync(parent, { recursive: true, mode: 0o700 });
-  chmodSync(parent, 0o700);
-  assertNoSymlinkComponents(projectRoot, filePath);
-  let descriptor: number;
+async function acquireLock(
+  projectRoot: string,
+  date: string,
+): Promise<ScheduledRunLock> {
   try {
-    descriptor = openSync(
-      filePath,
-      constants.O_CREAT |
-        constants.O_EXCL |
-        constants.O_WRONLY |
-        (constants.O_NOFOLLOW ?? 0),
-      0o600,
-    );
+    return await acquireScheduledRunLock({
+      projectRoot,
+      lockName: `delivery-${date}.lock`,
+    });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+    if (error instanceof ScheduledRunBusyError) {
       throw new DailyDigestDeliveryBusyError();
     }
     throw error;
   }
-  try {
-    writeFileSync(
-      descriptor,
-      `${JSON.stringify({ pid: process.pid, nonce: randomUUID() })}\n`,
-      "utf8",
-    );
-    fsyncSync(descriptor);
-  } catch (error) {
-    closeSync(descriptor);
-    try {
-      unlinkSync(filePath);
-    } catch {
-      // Only the lock created by this invocation is eligible for cleanup.
-    }
-    throw error;
-  }
-  let released = false;
-  return () => {
-    if (released) {
-      return;
-    }
-    released = true;
-    closeSync(descriptor);
-    try {
-      unlinkSync(filePath);
-    } catch {
-      // A stale lock is safer than permitting a duplicate delivery.
-    }
-  };
 }
 
 function digestHash(digest: string): string {
@@ -269,7 +224,7 @@ export async function deliverDailyDigest(
     mode: 0o700,
   });
   chmodSync(deliveryDirectory(options.projectRoot), 0o700);
-  const release = acquireLock(options.projectRoot, date);
+  const lock = await acquireLock(options.projectRoot, date);
   try {
     const current = readLedger(options.projectRoot, date);
     const sending = sendingLedger(
@@ -352,7 +307,7 @@ export async function deliverDailyDigest(
       throw new DailyDigestDeliveryIndeterminateError();
     }
   } finally {
-    release();
+    await lock.release();
   }
 }
 

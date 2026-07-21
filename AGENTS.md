@@ -3,7 +3,7 @@
 - Never invoke Codex with `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--add-dir`, `danger-full-access`, or any equivalent sandbox/approval bypass.
 - Never expose Codex, a shell, arbitrary commands, or remote-control behavior through WeChat. WeChat is a one-way delivery destination only.
 - Never print, log, commit, or include secrets in errors, fixtures, prompts, generated digests, or command output. Redact tokens, credentials, cookies, authorization headers, passwords, and local WeChat context before persistence.
-- Treat `vendor/cli-in-wechat` only as a pinned upstream QR-login/context/proactive-send adapter. Do not start or reuse any upstream Codex or remote-control entry point.
+- Keep the project-owned WeChat transport one-way and minimal. Do not add or start any upstream Codex, router, adapter-registry, proxy-initializer, or remote-control entry point.
 - Do not set, clear, or repurpose `HOME` or `CODEX_HOME` for the application or its child processes.
 
 ## Child Codex invocation boundary

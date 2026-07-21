@@ -1,3 +1,0 @@
-[submodule "vendor/cli-in-wechat"]
-	path = vendor/cli-in-wechat
-	url = https://github.com/sgaofen/cli-in-wechat

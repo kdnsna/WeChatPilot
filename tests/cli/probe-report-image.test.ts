@@ -103,7 +103,6 @@ describe("report image capability probe", () => {
       ["--prompt", "PRIVATE_PROMPT"],
       ["--model", "gpt-image-2"],
       ["--path", "/private/hero.png"],
-      ["--project-root", "relative"],
     ]) {
       stdout.mockClear();
       stderr.mockClear();

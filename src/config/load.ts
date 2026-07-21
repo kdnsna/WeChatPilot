@@ -6,12 +6,15 @@ import type { ZodType } from "zod";
 
 import {
   DigestConfigSchema,
+  DigestUserConfigSchema,
   RankingConfigSchema,
   SourcesConfigSchema,
   type DigestConfig,
   type RankingConfig,
   type SourcesConfig,
 } from "./schema.js";
+import { resolveRuntime, resolveRuntimePlaceholders } from "./runtime.js";
+import { loadSecurityProfile } from "./security-profile.js";
 
 export interface ProjectConfig {
   sources: SourcesConfig;
@@ -33,6 +36,8 @@ function loadYaml<T>(path: string, schema: ZodType<T>, label: string): T {
 
 export function loadConfig(projectRoot: string = process.cwd()): ProjectConfig {
   const configDirectory = join(projectRoot, "config");
+  const runtime = resolveRuntime();
+  const security = loadSecurityProfile(projectRoot);
 
   return {
     sources: loadYaml(
@@ -45,10 +50,9 @@ export function loadConfig(projectRoot: string = process.cwd()): ProjectConfig {
       RankingConfigSchema,
       "ranking",
     ),
-    digest: loadYaml(
-      join(configDirectory, "digest.yaml"),
-      DigestConfigSchema,
-      "digest",
-    ),
+    digest: resolveRuntimePlaceholders(DigestConfigSchema.parse({
+      ...loadYaml(join(configDirectory, "digest.yaml"), DigestUserConfigSchema, "digest user"),
+      codex: security.digestCodex,
+    }), runtime),
   };
 }

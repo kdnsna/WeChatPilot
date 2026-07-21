@@ -102,10 +102,10 @@ Clustering first compares canonical URLs with tracking parameters removed, then 
 
 ## 7. Codex generation boundary
 
-The detected CLI is `/opt/homebrew/bin/codex` version `0.144.4`. Live help shows that `--search` is a global option while `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, `--sandbox read-only`, and `--output-schema` are `exec` options. The application therefore uses the compatible shape:
+The detected CLI is `codex` version `0.144.4`. Live help shows that `--search` is a global option while `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, `--sandbox read-only`, and `--output-schema` are `exec` options. The application therefore uses the compatible shape:
 
 ```text
-/opt/homebrew/bin/codex --search --ask-for-approval never exec \
+codex --search --ask-for-approval never exec \
   --ephemeral --ignore-user-config --ignore-rules \
   --sandbox read-only --cd <project-root> \
   --output-schema <project-schema> -
@@ -131,7 +131,7 @@ Acceptance requires Node 22 build success, unit and integration tests for all co
 
 ## 11. Decisions fixed by this design
 
-- Runtime: Homebrew Node 22 via `/opt/homebrew/opt/node@22/bin` without changing the user's global Node 26 link.
+- Runtime: Homebrew Node 22 via `/path/to/node-bin` without changing the user's global Node 26 link.
 - GitHub authentication: optional environment variable only; unauthenticated mode remains functional.
 - Reddit: best-effort and non-blocking.
 - WeChat: one-way delivery only; no remote command surface.

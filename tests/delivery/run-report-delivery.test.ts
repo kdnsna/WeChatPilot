@@ -483,7 +483,7 @@ describe("run report delivery ledger", () => {
       join(process.cwd(), "src", "delivery", "run-report-delivery.ts"),
     ).href;
     const child = spawnSync(
-      "/opt/homebrew/opt/node@22/bin/node",
+      process.execPath,
       [
         "--import",
         "tsx",
@@ -493,7 +493,7 @@ describe("run report delivery ledger", () => {
           `let sends = 0;\n` +
           `try { await deliverRunReport({ projectRoot: ${JSON.stringify(root)}, report: ${JSON.stringify(report())}, sendText: async () => { sends += 1; return { status: "sent", chunks: 1 }; }, sendImage: async () => { sends += 1; return { status: "sent" }; } }); } catch (error) { process.stdout.write(JSON.stringify({ name: error?.name, sends })); }`,
       ],
-      { encoding: "utf8", timeout: 1_500 },
+      { encoding: "utf8", timeout: 10_000 },
     );
 
     expect(child.status).toBe(0);
@@ -754,7 +754,7 @@ describe("run report delivery ledger", () => {
       join(process.cwd(), "src", "delivery", "run-report-delivery.ts"),
     ).href;
     const child = spawnSync(
-      "/opt/homebrew/opt/node@22/bin/node",
+      process.execPath,
       [
         "--import",
         "tsx",
@@ -767,7 +767,7 @@ describe("run report delivery ledger", () => {
           })});\n` +
           `process.stdout.write(result);`,
       ],
-      { encoding: "utf8", timeout: 1_500 },
+      { encoding: "utf8", timeout: 10_000 },
     );
 
     expect(child.status).toBe(0);

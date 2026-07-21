@@ -33,6 +33,7 @@ function project(): string {
     "sources.yaml",
     "ranking.yaml",
     "digest.yaml",
+    "security-profile.yaml",
     "digest-output.schema.json",
   ]) {
     copyFileSync(join(repositoryRoot, "config", name), join(root, "config", name));

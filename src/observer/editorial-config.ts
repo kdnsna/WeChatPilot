@@ -8,6 +8,8 @@ import {
   safeCodexEnvironment,
   type CodexInvocation,
 } from "../digest/codex.js";
+import { resolveRuntime, resolveRuntimePlaceholders } from "../config/runtime.js";
+import { loadSecurityProfile } from "../config/security-profile.js";
 
 const EXPECTED_GLOBAL_ARGS = [
   "--sandbox",
@@ -111,11 +113,10 @@ const EditorialConfigSchema = z
       .strict(),
     codex: z
       .object({
-        version: z.literal("0.144.4"),
-        nodeExecutable: z.literal("/opt/homebrew/opt/node@22/bin/node"),
-        javascriptEntrypoint: z.literal(
-          "/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js",
-        ),
+        version: z.string().min(1).max(128),
+        nodeExecutable: z.string().refine((value) => value === "{nodeExecutable}" || value.startsWith("/")),
+        javascriptEntrypoint: z.string().refine((value) => value === "{codexEntrypoint}" || value.startsWith("/")),
+        direct: z.boolean().default(false),
         globalArgs: z.array(z.string()),
         command: z.literal("exec"),
         execArgs: z.array(z.string()),
@@ -152,6 +153,14 @@ const EditorialConfigSchema = z
     }
   });
 
+const EditorialUserConfigSchema = z.object({
+  version: EditorialConfigSchema.shape.version,
+  mode: EditorialConfigSchema.shape.mode,
+  canvas: EditorialConfigSchema.shape.canvas,
+  generation: EditorialConfigSchema.shape.generation,
+  style: EditorialConfigSchema.shape.style,
+}).strict();
+
 export type EditorialConfig = z.infer<typeof EditorialConfigSchema>;
 
 function validateOutputSchema(projectRoot: string): void {
@@ -178,7 +187,14 @@ export function loadEditorialConfig(projectRoot: string): EditorialConfig {
     }
     const path = join(projectRoot, "config", "report-visual.yaml");
     const document = parse(readFileSync(path, "utf8")) as unknown;
-    const config = EditorialConfigSchema.parse(document);
+    const security = loadSecurityProfile(projectRoot);
+    const config = resolveRuntimePlaceholders(
+      EditorialConfigSchema.parse({
+        ...EditorialUserConfigSchema.parse(document),
+        codex: security.imageCodex,
+      }),
+      resolveRuntime(),
+    );
     validateOutputSchema(projectRoot);
     return config;
   } catch {
@@ -201,9 +217,11 @@ export function buildEditorialImageInvocation(
       throw new TypeError("project root must be absolute");
     }
     return {
-      executable: validated.codex.nodeExecutable,
+      executable: validated.codex.direct
+        ? validated.codex.javascriptEntrypoint
+        : validated.codex.nodeExecutable,
       args: [
-        validated.codex.javascriptEntrypoint,
+        ...(validated.codex.direct ? [] : [validated.codex.javascriptEntrypoint]),
         ...validated.codex.globalArgs.map((argument) =>
           expandProjectRoot(argument, projectRoot),
         ),

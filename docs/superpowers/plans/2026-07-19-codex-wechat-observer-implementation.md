@@ -53,7 +53,7 @@ Before Task 1, create a dedicated worktree and branch from commit `954ad5c` usin
 - `src/delivery/wechat.ts`, `tests/delivery/wechat.test.ts` — prepare the image sender without exposing credentials.
 - `config/vendor-wechat-artifacts.json`, `tests/vendor/artifact-integrity.test.ts` — audit upstream `ilink/client.js` media reference.
 - `src/app/health.ts`, `tests/app/health.test.ts` — report observer config, renderer, and interrupted/outbox state without paths.
-- `scripts/run-scheduled.sh`, `launchd/com.kdnsna.daily-tech-digest.plist`, `tests/launchd/*.test.ts` — route the existing schedule through the observer while preserving the service label.
+- `scripts/run-scheduled.sh`, `launchd/io.wechatpilot.daily-tech-digest.plist`, `tests/launchd/*.test.ts` — route the existing schedule through the observer while preserving the service label.
 - `README.md` — document the read-only observer, test command, health states, and recovery behavior.
 
 ---
@@ -106,7 +106,7 @@ describe("observer job configuration", () => {
   });
 
   it.each(["/tmp/evil.js", "../evil.js"])("rejects entrypoint %s", (entrypoint) => {
-    const root = fixture(`version: 1\njobs:\n  - id: daily-tech-digest\n    name: 每日科技情报\n    projectLabel: WeChatPilot\n    executable: /opt/homebrew/opt/node@22/bin/node\n    entrypoint: ${entrypoint}\n    arguments: [--project-root, \"{projectRoot}\"]\n    workingDirectory: .\n    timeoutMs: 1200000\n    resultAdapter: scheduled-digest-json-v1\n    allowedArtifactRoot: output\n    notify: always\n`);
+    const root = fixture(`version: 1\njobs:\n  - id: daily-tech-digest\n    name: 每日科技情报\n    projectLabel: WeChatPilot\n    executable: /path/to/node\n    entrypoint: ${entrypoint}\n    arguments: [--project-root, \"{projectRoot}\"]\n    workingDirectory: .\n    timeoutMs: 1200000\n    resultAdapter: scheduled-digest-json-v1\n    allowedArtifactRoot: output\n    notify: always\n`);
     expect(() => loadObserverConfig(root)).toThrow(/observer|entrypoint|configuration/iu);
   });
 });
@@ -117,9 +117,9 @@ describe("observer job configuration", () => {
 Run:
 
 ```bash
-PATH=/opt/homebrew/opt/node@22/bin:/usr/bin:/bin \
-  /opt/homebrew/opt/node@22/bin/node \
-  /opt/homebrew/opt/node@22/lib/node_modules/npm/bin/npm-cli.js \
+PATH=/path/to/node-bin:/usr/bin:/bin \
+  /path/to/node \
+  npm \
   test -- tests/observer/config.test.ts
 ```
 
@@ -135,7 +135,7 @@ jobs:
   - id: daily-tech-digest
     name: 每日科技情报
     projectLabel: WeChatPilot
-    executable: /opt/homebrew/opt/node@22/bin/node
+    executable: /path/to/node
     entrypoint: dist/src/cli/scheduled.js
     arguments:
       - --project-root
@@ -364,9 +364,9 @@ git commit -m "feat: journal observer runs and recover interruptions"
 Run:
 
 ```bash
-PATH=/opt/homebrew/opt/node@22/bin:/usr/bin:/bin \
-  /opt/homebrew/opt/node@22/bin/node \
-  /opt/homebrew/opt/node@22/lib/node_modules/npm/bin/npm-cli.js \
+PATH=/path/to/node-bin:/usr/bin:/bin \
+  /path/to/node \
+  npm \
   install --save-exact @resvg/resvg-js@2.6.2
 ```
 
@@ -763,7 +763,7 @@ Add package scripts without replacing the internal `scheduled` command yet:
 
 ```json
 {
-  "observer": "tsx src/cli/observer.ts --project-root \"/Users/kdnsna/Documents/微信 chat\" --job daily-tech-digest"
+  "observer": "tsx src/cli/observer.ts --project-root \"/path/to/WeChatPilot\" --job daily-tech-digest"
 }
 ```
 
@@ -784,7 +784,7 @@ git commit -m "feat: orchestrate observed Codex jobs"
 - Modify: `src/app/health.ts`
 - Modify: `tests/app/health.test.ts`
 - Modify: `scripts/run-scheduled.sh`
-- Modify: `launchd/com.kdnsna.daily-tech-digest.plist`
+- Modify: `launchd/io.wechatpilot.daily-tech-digest.plist`
 - Modify: `tests/launchd/scripts.test.ts`
 - Modify: `tests/launchd/plist.test.ts`
 - Modify: `README.md`
@@ -826,7 +826,7 @@ Create `scripts/send-run-report-test.sh` using the same project-root discovery a
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && /bin/pwd -P)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && /bin/pwd -P)"
-NODE22="/opt/homebrew/opt/node@22/bin/node"
+NODE22="/path/to/node"
 cd "${PROJECT_ROOT}"
 exec "${NODE22}" --import tsx "${PROJECT_ROOT}/src/cli/send-run-report-test.ts"
 ```
@@ -838,12 +838,12 @@ Change `scripts/run-scheduled.sh` and the plist `ProgramArguments` from `dist/sr
 ```text
 dist/src/cli/observer.js
 --project-root
-/Users/kdnsna/Documents/微信 chat
+/path/to/WeChatPilot
 --job
 daily-tech-digest
 ```
 
-Preserve label `com.kdnsna.daily-tech-digest`, 08:00 schedule, `RunAtLoad`, working directory, log paths, `ExitTimeOut`, lack of `KeepAlive`, and the existing environment. Update launchd tests to assert the observer entry and exact job ID, and to reject remote-control/dangerous flags.
+Preserve label `io.wechatpilot.daily-tech-digest`, 08:00 schedule, `RunAtLoad`, working directory, log paths, `ExitTimeOut`, lack of `KeepAlive`, and the existing environment. Update launchd tests to assert the observer entry and exact job ID, and to reject remote-control/dangerous flags.
 
 - [ ] **Step 4: Update README with exact operator behavior**
 
@@ -862,11 +862,11 @@ Document:
 Run:
 
 ```bash
-PATH=/opt/homebrew/opt/node@22/bin:/usr/bin:/bin \
-  /opt/homebrew/opt/node@22/bin/node \
-  /opt/homebrew/opt/node@22/lib/node_modules/npm/bin/npm-cli.js \
+PATH=/path/to/node-bin:/usr/bin:/bin \
+  /path/to/node \
+  npm \
   test -- tests/app/health.test.ts tests/launchd/scripts.test.ts tests/launchd/plist.test.ts
-/usr/bin/plutil -lint launchd/com.kdnsna.daily-tech-digest.plist
+/usr/bin/plutil -lint launchd/io.wechatpilot.daily-tech-digest.plist
 ```
 
 Expected: all focused tests PASS and `plutil` prints `OK`.
@@ -890,12 +890,12 @@ git commit -m "feat: operate the Codex WeChat observer"
 Run:
 
 ```bash
-PATH=/opt/homebrew/opt/node@22/bin:/usr/bin:/bin \
-  /opt/homebrew/opt/node@22/bin/node \
-  /opt/homebrew/opt/node@22/lib/node_modules/npm/bin/npm-cli.js test
-/opt/homebrew/opt/node@22/bin/node node_modules/typescript/bin/tsc --noEmit
-/opt/homebrew/opt/node@22/bin/node node_modules/typescript/bin/tsc --noEmit false --outDir dist
-/usr/bin/plutil -lint launchd/com.kdnsna.daily-tech-digest.plist
+PATH=/path/to/node-bin:/usr/bin:/bin \
+  /path/to/node \
+  npm test
+/path/to/node node_modules/typescript/bin/tsc --noEmit
+/path/to/node node_modules/typescript/bin/tsc --noEmit false --outDir dist
+/usr/bin/plutil -lint launchd/io.wechatpilot.daily-tech-digest.plist
 git diff --check
 ```
 

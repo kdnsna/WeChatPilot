@@ -9,8 +9,9 @@ import {
 const projectRoot = "/Users/example/project";
 const codex: DigestConfig["codex"] = {
   version: "0.144.4",
-  nodeExecutable: "/opt/homebrew/opt/node@22/bin/node",
-  javascriptEntrypoint: "/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js",
+  nodeExecutable: "/path/to/node",
+  javascriptEntrypoint: "/path/to/codex.js",
+  direct: false,
   globalArgs: [
     "--search",
     "--sandbox",

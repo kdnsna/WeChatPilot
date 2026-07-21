@@ -13,11 +13,11 @@ describe("LaunchAgent lifecycle scripts", () => {
     ) as { scripts: Record<string, string> };
     expect(packageJson.scripts).toMatchObject({
       "report:image-probe":
-        'tsx src/cli/probe-report-image.ts --project-root "/Users/kdnsna/Documents/微信 chat"',
+        'tsx src/cli/probe-report-image.ts --project-root .',
       "report:preview":
-        'tsx src/cli/render-run-report-preview.ts --project-root "/Users/kdnsna/Documents/微信 chat"',
+        'tsx src/cli/render-run-report-preview.ts --project-root .',
       "report:test":
-        'tsx src/cli/send-run-report-test.ts --project-root "/Users/kdnsna/Documents/微信 chat"',
+        'tsx src/cli/send-run-report-test.ts --project-root .',
     });
   });
 
@@ -69,11 +69,9 @@ describe("LaunchAgent lifecycle scripts", () => {
   it("routes the scheduled script through the fixed observer job without remote control", () => {
     const path = resolve(projectRoot, "scripts", "run-scheduled.sh");
     const script = readFileSync(path, "utf8");
-    expect(script).toContain(
-      'PROJECT_ROOT="/Users/kdnsna/Documents/微信 chat"',
-    );
-    expect(script).not.toContain("SCRIPT_DIR=");
-    expect(script).toContain('NODE22="/opt/homebrew/opt/node@22/bin/node"');
+    expect(script).toContain('PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.."');
+    expect(script).toContain("SCRIPT_DIR=");
+    expect(script).toContain('NODE_EXECUTABLE="${NODE_EXECUTABLE:-$(command -v node)}"');
     expect(script).toContain('"${PROJECT_ROOT}/dist/src/cli/observer.js"');
     expect(script).toContain('--job "daily-tech-digest"');
     expect(script).not.toContain("scheduled.js");
@@ -92,7 +90,7 @@ describe("LaunchAgent lifecycle scripts", () => {
     const script = readFileSync(path, "utf8");
     expect(script).toContain('SCRIPT_DIR="$(cd "$(/usr/bin/dirname');
     expect(script).toContain('PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.."');
-    expect(script).toContain('NODE22="/opt/homebrew/opt/node@22/bin/node"');
+    expect(script).toContain('NODE_EXECUTABLE="${NODE_EXECUTABLE:-$(command -v node)}"');
     expect(script).toContain("--import tsx");
     expect(script).toContain("src/cli/send-run-report-test.ts");
     expect(script).not.toMatch(
@@ -108,7 +106,7 @@ describe("LaunchAgent lifecycle scripts", () => {
     ["--status", "failed"],
     ["--message", "override"],
     ["--path", "/private/tmp/card.png"],
-    ["--project-root", "relative"],
+    ["--project-root", ""],
     ["--project-root", projectRoot, "--extra"],
   ])("rejects fixed test-card CLI arguments: %s", async (...arguments_) => {
     const stdout = vi.fn();
@@ -132,9 +130,10 @@ describe("LaunchAgent lifecycle scripts", () => {
         message: "inspect project logs",
       })}\n`,
     );
-    expect(stderr.mock.calls.flat().join("")).not.toContain(
-      arguments_.at(-1),
-    );
+    const lastArgument = arguments_.at(-1);
+    if (lastArgument !== "") {
+      expect(stderr.mock.calls.flat().join("")).not.toContain(lastArgument);
+    }
   });
 
   it("requires explicit confirmation before loading", () => {
@@ -145,10 +144,8 @@ describe("LaunchAgent lifecycle scripts", () => {
     }
     const script = readFileSync(path, "utf8");
     expect(script).toContain("--confirm-load");
-    expect(script).toContain("/bin/launchctl bootstrap");
-    expect(script).toContain(
-      "/Users/kdnsna/Library/LaunchAgents/com.kdnsna.daily-tech-digest.plist",
-    );
+    expect(script).toContain("wechatpilot.ts schedule install");
+    expect(script).not.toContain("/Users/");
     expect(script).not.toContain("sudo");
   });
 
@@ -159,10 +156,8 @@ describe("LaunchAgent lifecycle scripts", () => {
       return;
     }
     const script = readFileSync(path, "utf8");
-    expect(script).toContain("/bin/launchctl bootout");
-    expect(script).toContain(
-      "/Users/kdnsna/Library/LaunchAgents/com.kdnsna.daily-tech-digest.plist",
-    );
+    expect(script).toContain("wechatpilot.ts\" schedule remove");
+    expect(script).not.toContain("/Users/");
     expect(script).not.toContain("sudo");
     expect(script).not.toMatch(/rm\s+-r/u);
   });
