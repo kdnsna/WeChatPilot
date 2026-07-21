@@ -579,6 +579,73 @@ describe("observer orchestration", () => {
     expect(calls).toEqual([reports[0]!.runId, reports[1]!.runId, "run-job", CURRENT_ID]);
   });
 
+  it.each([
+    ["on-failure", ["failed"], 1],
+    ["never", [], 0],
+  ] as const)(
+    "does not enqueue intentionally suppressed historical reports for %s",
+    async (notify, expectedStatuses, expectedEnqueues) => {
+      const successful = report("018f514c-1a2b-7abc-8def-1234567890d1", "success");
+      const failed = report("018f514c-1a2b-7abc-8def-1234567890d2", "failed");
+      const enqueueOutbox = vi.fn(dependencies().enqueueOutbox);
+      const policyJob = { ...job, notify };
+      const deps = dependencies({
+        loadConfig: vi.fn(() => ({ version: 1 as const, jobs: [policyJob] } as ObserverConfig)),
+        listFinalReports: vi.fn(() => [successful, failed]),
+        deliveryDisposition: vi.fn(() => "missing" as const),
+        enqueueOutbox,
+        recordNotificationDisposition: vi.fn(),
+        runJob: vi.fn(async () => ({
+          authority: authority(CURRENT_ID, "success"),
+          draft: null,
+        })),
+      });
+
+      await runObserverJob({
+        projectRoot: ROOT,
+        jobId: policyJob.id,
+        dependencies: deps,
+      });
+
+      expect(enqueueOutbox).toHaveBeenCalledTimes(expectedEnqueues);
+      expect(enqueueOutbox.mock.calls.map(([options]) => options.report.status)).toEqual(
+        expectedStatuses,
+      );
+    },
+  );
+
+  it.each([
+    ["on-failure", "success", "not-required"],
+    ["never", "failed", "notification-disabled"],
+  ] as const)(
+    "records %s when the current %s report is intentionally suppressed",
+    async (notify, status, disposition) => {
+      const recordNotificationDisposition = vi.fn();
+      const policyJob = { ...job, notify };
+      const deps = dependencies({
+        loadConfig: vi.fn(() => ({ version: 1 as const, jobs: [policyJob] } as ObserverConfig)),
+        runJob: vi.fn(async () => ({
+          authority: authority(CURRENT_ID, status),
+          draft: null,
+        })),
+      }) as ObserverDependencies & { recordNotificationDisposition: typeof recordNotificationDisposition };
+      deps.recordNotificationDisposition = recordNotificationDisposition;
+
+      await runObserverJob({
+        projectRoot: ROOT,
+        jobId: policyJob.id,
+        dependencies: deps,
+      });
+
+      expect(recordNotificationDisposition).toHaveBeenCalledWith({
+        projectRoot: ROOT,
+        report: report(CURRENT_ID, status),
+        disposition,
+      });
+      expect(deps.deliver).not.toHaveBeenCalled();
+    },
+  );
+
   it("refuses a new run when the old runner is dead but its child is still alive", async () => {
     const root = projectRoot();
     startRunRecord({

@@ -135,6 +135,13 @@ const SentLedgerSchema = LedgerBaseSchema.extend({
   }
 });
 
+const NotificationSuppressedLedgerSchema = LedgerBaseSchema.extend({
+  status: z.enum(["not-required", "notification-disabled"]),
+}).strict().refine(
+  (ledger) => ledger.textAttempt === 0 && ledger.imageAttempt === 0,
+  "suppressed notifications must not have delivery attempts",
+);
+
 const DeliveryLedgerSchema = z.union([
   TextSendingLedgerSchema,
   TextSentLedgerSchema,
@@ -142,6 +149,7 @@ const DeliveryLedgerSchema = z.union([
   FailedLedgerSchema,
   IndeterminateLedgerSchema,
   SentLedgerSchema,
+  NotificationSuppressedLedgerSchema,
 ]);
 
 type DeliveryLedger = z.infer<typeof DeliveryLedgerSchema>;
@@ -204,6 +212,8 @@ export type RunDeliveryDisposition =
   | "missing"
   | "retryable"
   | "sent"
+  | "not-required"
+  | "notification-disabled"
   | "indeterminate"
   | "blocked";
 
@@ -425,6 +435,40 @@ export function runReportSha256(report: RunReport): string {
   return createHash("sha256")
     .update(JSON.stringify(stableValue(parsed)), "utf8")
     .digest("hex");
+}
+
+export function recordRunReportNotificationDisposition(options: {
+  readonly projectRoot: string;
+  readonly report: RunReport;
+  readonly disposition: "not-required" | "notification-disabled";
+  readonly now?: () => Date;
+}): void {
+  const report = RunReportSchema.parse(options.report);
+  const now = options.now ?? (() => new Date());
+  ensureStateDirectories(options.projectRoot);
+  const hash = runReportSha256(report);
+  const current = readLedger(options.projectRoot, report.runId, hash);
+  if (current.kind === "invalid") {
+    throw new RunReportDeliveryIndeterminateError();
+  }
+  if (current.ledger !== undefined) {
+    const existing = disposition(current.ledger);
+    if (existing === options.disposition || existing === "sent") {
+      return;
+    }
+    throw new RunReportDeliveryIndeterminateError();
+  }
+  const recordedAt = timestamp(now);
+  writeAfterAttempt(options.projectRoot, {
+    version: 1,
+    status: options.disposition,
+    runId: report.runId,
+    reportSha256: hash,
+    startedAt: recordedAt,
+    updatedAt: recordedAt,
+    textAttempt: 0,
+    imageAttempt: 0,
+  });
 }
 
 function timestamp(now: () => Date): string {
@@ -928,6 +972,12 @@ function disposition(ledger: DeliveryLedger): RunDeliveryDisposition {
     return "sent";
   }
   if (
+    ledger.status === "not-required" ||
+    ledger.status === "notification-disabled"
+  ) {
+    return ledger.status;
+  }
+  if (
     ledger.status === "indeterminate" ||
     ledger.status === "text-sending" ||
     ledger.status === "image-sending"
@@ -936,6 +986,9 @@ function disposition(ledger: DeliveryLedger): RunDeliveryDisposition {
   }
   if (ledger.status === "text-sent") {
     return "retryable";
+  }
+  if (ledger.status !== "failed") {
+    return "indeterminate";
   }
   if (ledger.failureKind !== "rejected") {
     return "blocked";

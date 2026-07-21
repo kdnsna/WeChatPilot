@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 import {
   deliverRunReport,
+  recordRunReportNotificationDisposition,
   runDeliveryDisposition,
   type DeliverRunReportOptions,
   type DeliverRunReportResult,
@@ -100,6 +101,7 @@ export interface ObserverDependencies {
     readonly projectRoot: string;
     readonly report: RunReport;
   }) => RunDeliveryDisposition;
+  readonly recordNotificationDisposition?: typeof recordRunReportNotificationDisposition;
   readonly acquireTaskLock?: (
     options: AcquireObserverTaskLockOptions,
   ) => Promise<ObserverTaskLock>;
@@ -153,6 +155,7 @@ interface ResolvedObserverDependencies {
     readonly projectRoot: string;
     readonly report: RunReport;
   }) => RunDeliveryDisposition;
+  readonly recordNotificationDisposition: typeof recordRunReportNotificationDisposition;
   readonly acquireTaskLock: (
     options: AcquireObserverTaskLockOptions,
   ) => Promise<ObserverTaskLock>;
@@ -195,6 +198,8 @@ function resolvedDependencies(
     listFinalReports: supplied?.listFinalReports ?? listFinalRunReports,
     deliveryDisposition:
       supplied?.deliveryDisposition ?? runDeliveryDisposition,
+    recordNotificationDisposition:
+      supplied?.recordNotificationDisposition ?? recordRunReportNotificationDisposition,
     acquireTaskLock: supplied?.acquireTaskLock ?? acquireObserverTaskLock,
     runJob: supplied?.runJob ?? runManagedJob,
     normalize: supplied?.normalize ?? buildRunReport,
@@ -439,9 +444,19 @@ async function queueHistoricalReports(
   options: RunObserverJobOptions,
   dependencies: ResolvedObserverDependencies,
   recovery: RecoverInterruptedRunsResult,
+  config: ObserverConfig,
 ): Promise<void> {
   for (const authority of recovery.recovered) {
     const report = recoveredReport(options, dependencies, authority);
+    let reportJob: ObserverJob;
+    try {
+      reportJob = findObserverJob(config, report.taskId);
+    } catch {
+      continue;
+    }
+    if (!shouldNotify(reportJob, report)) {
+      continue;
+    }
     const disposition = dependencies.deliveryDisposition({
       projectRoot: options.projectRoot,
       report,
@@ -457,6 +472,15 @@ async function queueHistoricalReports(
   }
 
   for (const report of dependencies.listFinalReports(options.projectRoot)) {
+    let reportJob: ObserverJob;
+    try {
+      reportJob = findObserverJob(config, report.taskId);
+    } catch {
+      continue;
+    }
+    if (!shouldNotify(reportJob, report)) {
+      continue;
+    }
     const disposition = dependencies.deliveryDisposition({
       projectRoot: options.projectRoot,
       report,
@@ -525,7 +549,7 @@ export async function runObserverJob(
     ...(options.now === undefined ? {} : { now: options.now }),
   });
 
-  await queueHistoricalReports(options, dependencies, recovery);
+  await queueHistoricalReports(options, dependencies, recovery, config);
   await drainHistoricalOutbox(options, dependencies);
 
   if (recovery.activeTaskIds.includes(job.id)) {
@@ -555,6 +579,13 @@ export async function runObserverJob(
     dependencies.finishRecord(options.projectRoot, report);
 
     if (!shouldNotify(job, report)) {
+      dependencies.recordNotificationDisposition({
+        projectRoot: options.projectRoot,
+        report,
+        disposition:
+          job.notify === "never" ? "notification-disabled" : "not-required",
+        ...(options.now === undefined ? {} : { now: options.now }),
+      });
       return report;
     }
 
