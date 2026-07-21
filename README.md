@@ -24,18 +24,15 @@ WeChatPilot 将科技日报作为首个经过真实运行验证的内置工作�
 
 ## 初始化与本地命令
 
-项目根目录为：
-
-```text
-/Users/kdnsna/Documents/微信 chat
-```
-
-首次安装、vendor 构建和全部测试：
+克隆仓库并初始化 vendor、构建产物和全部测试：
 
 ```sh
-cd '/Users/kdnsna/Documents/微信 chat'
+git clone --recurse-submodules https://github.com/kdnsna/WeChatPilot.git
+cd WeChatPilot
 ./scripts/init-project.sh
 ```
+
+当前版本以 macOS、Homebrew Node.js 22 和作者已验证的 LaunchAgent 配置为运行基线。仓库中的部署配置保留了现有服务的绝对路径与身份；在另一台 Mac 上启用定时发送前，请先审阅并适配 `config/`、`launchd/` 和相关脚本，不要直接加载示例 LaunchAgent。
 
 健康检查（不输出路径、用户 ID 或令牌）：
 
@@ -225,11 +222,7 @@ PATH=/opt/homebrew/opt/node@22/bin:/usr/bin:/bin \
 
 ## 定时任务状态
 
-已生成并通过 `plutil` 校验：
-
-```text
-/Users/kdnsna/Documents/微信 chat/launchd/com.kdnsna.daily-tech-digest.plist
-```
+仓库中的 `launchd/com.kdnsna.daily-tech-digest.plist` 已通过 `plutil` 校验。
 
 它使用当前用户和已检测到的绝对 Node 22、项目、构建产物与日志路径；每天本机时区 08:00 运行。当前 macOS 时区为 `Asia/Shanghai`，子进程也固定 `TZ=Asia/Shanghai`。`StartCalendarInterval` 在 Mac 休眠错过时间时会在唤醒后合并补跑一次，`RunAtLoad` 则覆盖首次加载或登录后重新加载；应用内的北京时间门槛会在 08:00 前返回 `not-due`，避免登录时早发。每日 ledger 保证当天已成功发送时不重复。全任务锁阻止并发，应用内部总共最多三次尝试（初次加两次重试），且只有明确可重试的失败才会重试。配置没有 `KeepAlive`，不会无限重启。
 
@@ -261,3 +254,11 @@ PATH=/opt/homebrew/opt/node@22/bin:/usr/bin:/bin \
 ```
 
 标准输出与错误分别写入 `logs/launchd.stdout.log` 和 `logs/launchd.stderr.log`。业务过程的脱敏 JSONL 日志仍保存在 `logs/`；微信登录失效会单次退出并提示重新运行 `./scripts/init-wechat.sh`，不会无限重试。
+
+## 安全与漏洞披露
+
+请不要在公开 Issue 中提交漏洞细节、Token、Cookie、微信用户 ID、context token、二维码、日志或本机路径。安全问题请通过 GitHub 的[私密漏洞报告](https://github.com/kdnsna/WeChatPilot/security/advisories/new)提交；完整范围与报告要求见 [`SECURITY.md`](SECURITY.md)。
+
+## 许可证与第三方组件
+
+WeChatPilot 自有代码以 [MIT License](LICENSE) 开源。`vendor/cli-in-wechat` 是固定提交的独立 Git submodule，不属于 WeChatPilot 自有代码；其上游归属和使用边界见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) 与 [`vendor/README.md`](vendor/README.md)。WeChat、微信及相关标识归其权利人所有，本项目与微信或腾讯不存在隶属、授权或背书关系。
