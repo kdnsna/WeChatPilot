@@ -613,7 +613,7 @@ describe("project health", () => {
 
     expect(
       runHealthCli(
-        ["--project-root", root],
+        ["--project-root", root, "--json"],
         {
           stdout: (value) => pendingOutput.push(value),
           stderr: (value) => pendingErrors.push(value),
@@ -626,7 +626,7 @@ describe("project health", () => {
 
     expect(
       runHealthCli(
-        ["--project-root", root],
+        ["--project-root", root, "--json"],
         {
           stdout: (value) => failedOutput.push(value),
           stderr: (value) => failedErrors.push(value),

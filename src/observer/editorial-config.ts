@@ -91,7 +91,7 @@ function exactArguments(
 const EditorialConfigSchema = z
   .object({
     version: z.literal(1),
-    mode: z.enum(["editorial", "legacy"]),
+    mode: z.enum(["off", "deterministic", "editorial", "legacy"]),
     canvas: z
       .object({
         width: z.literal(1080),
@@ -187,15 +187,33 @@ export function loadEditorialConfig(projectRoot: string): EditorialConfig {
     }
     const path = join(projectRoot, "config", "report-visual.yaml");
     const document = parse(readFileSync(path, "utf8")) as unknown;
+    const user = EditorialUserConfigSchema.parse(document);
+    if (user.mode === "off") {
+      // Image generation is optional; off mode still returns a typed config shell.
+      return {
+        ...user,
+        codex: {
+          version: "disabled",
+          nodeExecutable: "{nodeExecutable}",
+          javascriptEntrypoint: "{codexEntrypoint}",
+          direct: true,
+          globalArgs: [...EXPECTED_GLOBAL_ARGS],
+          command: "exec",
+          execArgs: [...EXPECTED_EXEC_ARGS],
+        },
+      } as EditorialConfig;
+    }
     const security = loadSecurityProfile(projectRoot);
     const config = resolveRuntimePlaceholders(
       EditorialConfigSchema.parse({
-        ...EditorialUserConfigSchema.parse(document),
+        ...user,
         codex: security.imageCodex,
       }),
       resolveRuntime(),
     );
-    validateOutputSchema(projectRoot);
+    if (user.mode === "editorial") {
+      validateOutputSchema(projectRoot);
+    }
     return config;
   } catch {
     throw new Error("Invalid editorial report configuration");

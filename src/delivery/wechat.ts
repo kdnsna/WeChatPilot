@@ -9,7 +9,7 @@ import {
   prepareWechatImageMedia,
   WechatMediaPreparationError,
 } from "./wechat-media.js";
-import { readProjectText, writeProjectTextAtomic } from "../lib/project-file.js";
+import { readPrivateProjectText, writeProjectTextAtomic } from "../lib/project-file.js";
 import {
   assertNoSymlinkComponents,
   createProjectPaths,
@@ -214,7 +214,7 @@ function readPrivateText(
   filePath: string,
   maximumBytes = MAX_STATE_BYTES,
 ): string | null {
-  const text = readProjectText(projectRoot, filePath, maximumBytes);
+  const text = readPrivateProjectText(projectRoot, filePath, maximumBytes);
   if (text === null) {
     return null;
   }

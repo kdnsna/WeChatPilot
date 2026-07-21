@@ -128,7 +128,7 @@ export function readProjectBytes(
   }
 }
 
-export function readProjectText(
+export function readPublicProjectText(
   projectRoot: string,
   filePath: string,
   maximumBytes: number,
@@ -157,6 +157,18 @@ export function readProjectText(
       closeSync(descriptor);
     }
   }
+}
+
+/** @deprecated Prefer readPublicProjectText for non-secret workspace files. */
+export const readProjectText = readPublicProjectText;
+
+export function readPrivateProjectText(
+  projectRoot: string,
+  filePath: string,
+  maximumBytes: number,
+): string | null {
+  const bytes = readProjectBytes(projectRoot, filePath, maximumBytes);
+  return bytes === null ? null : bytes.toString("utf8");
 }
 
 export function writeProjectBytesAtomic(

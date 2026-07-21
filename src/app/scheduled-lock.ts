@@ -19,7 +19,7 @@ import {
   assertNoSymlinkComponents,
   resolveProjectPath,
 } from "../lib/paths.js";
-import { readProjectText, writeProjectTextAtomic } from "../lib/project-file.js";
+import { readPrivateProjectText, writeProjectTextAtomic } from "../lib/project-file.js";
 
 const MAX_LOCK_BYTES = 4 * 1_024;
 
@@ -145,7 +145,7 @@ function recordStaleRecovery(projectRoot: string): void {
   const path = resolveProjectPath(projectRoot, ".state", "stability-metrics.json");
   let current = { staleLockRecoveries: 0, manualInterventions: 0 };
   try {
-    const raw = readProjectText(projectRoot, path, 4_096);
+    const raw = readPrivateProjectText(projectRoot, path, 4_096);
     if (raw !== null) current = { ...current, ...(JSON.parse(raw) as object) };
   } catch { /* Start a fresh non-sensitive counter document. */ }
   writeProjectTextAtomic(projectRoot, path, `${JSON.stringify({

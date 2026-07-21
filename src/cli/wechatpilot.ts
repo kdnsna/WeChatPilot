@@ -17,7 +17,15 @@ import { pathToFileURL } from "node:url";
 import { stringify } from "yaml";
 
 import { runDailyDigest } from "../app/digest.js";
-import { inspectProjectHealth } from "../app/health.js";
+import {
+  formatProjectHealthHuman,
+  inspectProjectHealth,
+} from "../app/health.js";
+import { inspectOutbox } from "../delivery/outbox.js";
+import {
+  applicationSupportProfileRoot,
+  resolveLayoutRoots,
+} from "../layout/roots.js";
 import { loadConfig } from "../config/load.js";
 import { resolveRuntime } from "../config/runtime.js";
 import { loadEditorialConfig } from "../observer/editorial-config.js";
@@ -172,7 +180,24 @@ export async function runWechatPilot(arguments_: readonly string[]): Promise<obj
   if (arguments_[0] === "init") return initialize(root);
   if (arguments_[0] === "doctor") {
     const repair = arguments_.includes("--repair");
-    return { ok: true, repair, locks: inspectLocks(root, repair), health: inspectProjectHealth({ projectRoot: root }) };
+    const json = arguments_.includes("--json");
+    const health = inspectProjectHealth({ projectRoot: root });
+    const locks = inspectLocks(root, repair);
+    const outbox = inspectOutbox(root);
+    const layout = resolveLayoutRoots({ projectRoot: root });
+    if (!json) {
+      const human = [
+        formatProjectHealthHuman(health).trimEnd(),
+        `locks: total=${(locks as { total: number }).total} active=${(locks as { active: number }).active} stale=${(locks as { stale: number }).stale} repaired=${(locks as { repaired: number }).repaired}`,
+        `outbox: pending=${outbox.pending} manualReview=${outbox.manualReview} blocked=${outbox.blocked}`,
+        `layout: app=${layout.appRoot}`,
+        `layout: workspace=${layout.workspaceRoot}`,
+        `layout: state=${layout.stateRoot}`,
+        `profileDefault: ${applicationSupportProfileRoot()}`,
+      ].join("\n");
+      return { ok: true, repair, format: "human", text: `${human}\n`, health, locks, outbox, layout };
+    }
+    return { ok: true, repair, locks, health, outbox, layout };
   }
   if (arguments_[0] === "config" && arguments_[1] === "validate") {
     loadConfig(root); loadObserverConfig(root); loadEditorialConfig(root);
@@ -191,8 +216,20 @@ export async function runWechatPilot(arguments_: readonly string[]): Promise<obj
 }
 
 async function main(): Promise<void> {
-  try { process.stdout.write(`${stringify(await runWechatPilot(process.argv.slice(2))).trim()}\n`); }
-  catch { process.stderr.write(`${JSON.stringify({ ok: false, message: "wechatpilot command failed" })}\n`); process.exitCode = 1; }
+  try {
+    const result = await runWechatPilot(process.argv.slice(2));
+    if (typeof result === "object" && result !== null) {
+      const record = result as Record<string, unknown>;
+      if (record.format === "human" && typeof record.text === "string") {
+        process.stdout.write(record.text);
+        return;
+      }
+    }
+    process.stdout.write(`${stringify(result).trim()}\n`);
+  } catch {
+    process.stderr.write(`${JSON.stringify({ ok: false, message: "wechatpilot command failed" })}\n`);
+    process.exitCode = 1;
+  }
 }
 
 if (process.argv[1] !== undefined && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) void main();

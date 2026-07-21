@@ -14,7 +14,7 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=22 <23"
+    "node": ">=22"
   },
   "scripts": {
     "test": "vitest run",
@@ -35,7 +35,13 @@
     "report:test": "tsx src/cli/send-run-report-test.ts --project-root .",
     "health": "tsx src/cli/health.ts",
     "stability:review": "tsx src/cli/wechatpilot.ts stability review",
-    "wechatpilot": "tsx src/cli/wechatpilot.ts"
+    "wechatpilot": "tsx src/cli/wechatpilot.ts",
+    "lint": "tsc --noEmit",
+    "format:check": "node -e \"const {readdirSync,statSync,readFileSync}=require('fs');const {join}=require('path');function walk(d,a=[]){for(const n of readdirSync(d)){if(['node_modules','dist','.git','.state','output','logs','data'].includes(n))continue;const p=join(d,n);if(statSync(p).isDirectory())walk(p,a);else if(/\\.(ts|js|json|yml|yaml|md)$/.test(n))a.push(p);}return a;}const bad=[];for(const f of walk('.')){const t=readFileSync(f,'utf8');if(t.includes('\\r'))bad.push(f);} if(bad.length){console.error(bad.join('\\n'));process.exit(1);}\"",
+    "test:coverage": "vitest run --coverage",
+    "check:fresh-clone": "node scripts/fresh-clone-smoke.mjs",
+    "check:governance": "node scripts/check-governance.mjs",
+    "doctor:bundle": "tsx src/cli/wechatpilot.ts doctor --json"
   },
   "dependencies": {
     "@resvg/resvg-js": "2.6.2",

@@ -3,14 +3,8 @@ import {
   createHash,
   randomBytes as nodeRandomBytes,
 } from "node:crypto";
-import {
-  closeSync,
+import fs, {
   constants,
-  fstatSync,
-  lstatSync,
-  openSync,
-  readSync,
-  realpathSync,
   type Stats,
 } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
@@ -97,7 +91,7 @@ function containedReportPath(projectRoot: string, imagePath: string): {
   readonly path: string;
   readonly snapshot: FileSnapshot;
 } {
-  const root = realpathSync(projectRoot);
+  const root = fs.realpathSync(projectRoot);
   if (!isAbsolute(imagePath) || resolve(imagePath) !== imagePath) {
     throw new Error("invalid report image path");
   }
@@ -115,14 +109,14 @@ function containedReportPath(projectRoot: string, imagePath: string): {
   ) {
     throw new Error("invalid report image path");
   }
-  const metadata = lstatSync(candidate);
+  const metadata = fs.lstatSync(candidate);
   if (metadata.isSymbolicLink() || !metadata.isFile()) {
     throw new Error("unsafe image file");
   }
   if (metadata.size > MAX_IMAGE_BYTES) {
     throw new Error("image too large");
   }
-  const actual = realpathSync(candidate);
+  const actual = fs.realpathSync(candidate);
   const actualRelative = relative(root, actual);
   if (
     actualRelative === ".." ||
@@ -139,22 +133,23 @@ function readReportPng(projectRoot: string, imagePath: string): Buffer {
   const report = containedReportPath(projectRoot, imagePath);
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(
+    descriptor = fs.openSync(
       report.path,
       constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
     );
-    const opened = fstatSync(descriptor);
+    const opened = fs.fstatSync(descriptor);
     if (
       !opened.isFile() ||
       opened.dev !== report.snapshot.device ||
-      opened.ino !== report.snapshot.inode
+      opened.ino !== report.snapshot.inode ||
+      !sameSnapshot(opened, report.snapshot)
     ) {
       throw new Error("unsafe image file");
     }
     const buffer = Buffer.alloc(MAX_IMAGE_BYTES + 1);
     let bytesRead = 0;
     while (bytesRead < buffer.length) {
-      const count = readSync(
+      const count = fs.readSync(
         descriptor,
         buffer,
         bytesRead,
@@ -165,14 +160,28 @@ function readReportPng(projectRoot: string, imagePath: string): Buffer {
         break;
       }
       bytesRead += count;
+      // Re-check path identity mid-read so same-size rewrites are observed even
+      // when the open file descriptor still reports stale timestamps.
+      const midPath = fs.lstatSync(report.path);
+      if (
+        midPath.isSymbolicLink() ||
+        !midPath.isFile() ||
+        !sameSnapshot(midPath, report.snapshot)
+      ) {
+        throw new Error("image changed while reading");
+      }
     }
-    const after = fstatSync(descriptor);
+    const after = fs.fstatSync(descriptor);
+    const finalPath = fs.lstatSync(report.path);
     if (bytesRead > MAX_IMAGE_BYTES) {
       throw new Error("image too large");
     }
     if (
       bytesRead !== report.snapshot.size ||
-      !sameSnapshot(after, report.snapshot)
+      !sameSnapshot(after, report.snapshot) ||
+      finalPath.isSymbolicLink() ||
+      !finalPath.isFile() ||
+      !sameSnapshot(finalPath, report.snapshot)
     ) {
       throw new Error("image changed while reading");
     }
@@ -187,7 +196,7 @@ function readReportPng(projectRoot: string, imagePath: string): Buffer {
     return Buffer.from(image);
   } finally {
     if (descriptor !== undefined) {
-      closeSync(descriptor);
+      fs.closeSync(descriptor);
     }
   }
 }

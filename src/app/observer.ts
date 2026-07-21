@@ -8,6 +8,10 @@ import {
   type RunDeliveryDisposition,
 } from "../delivery/run-report-delivery.js";
 import {
+  enqueueRunReportOutbox,
+  processRunReportOutbox,
+} from "../delivery/outbox.js";
+import {
   prepareWechatImageSender,
   prepareWechatTextSender,
   type PreparedWechatImageSender,
@@ -22,6 +26,7 @@ import {
   findObserverJob,
   loadObserverConfig,
   type ObserverConfig,
+  type ObserverJob,
 } from "../observer/config.js";
 import {
   runManagedJob,
@@ -77,6 +82,7 @@ import { shanghaiDateKey } from "../lib/time.js";
 const RECOVERY_SUMMARY = "任务因主机或进程中断，已在恢复后补记";
 const RENDER_FAILURE_CODE = "OBSERVER_REPORT_RENDER_FAILED";
 const SAFE_RENDER_ERROR = "Unable to prepare observer report image";
+const OUTBOX_HISTORY_LIMIT = 3;
 
 interface PrepareObserverSenderOptions {
   readonly projectRoot: string;
@@ -119,6 +125,8 @@ export interface ObserverDependencies {
   readonly deliver?: (
     options: DeliverRunReportOptions,
   ) => Promise<DeliverRunReportResult>;
+  readonly enqueueOutbox?: typeof enqueueRunReportOutbox;
+  readonly processOutbox?: typeof processRunReportOutbox;
   readonly createLogger?: (options: JsonlLoggerOptions) => JsonlLogger;
 }
 
@@ -173,6 +181,8 @@ interface ResolvedObserverDependencies {
   readonly deliver: (
     options: DeliverRunReportOptions,
   ) => Promise<DeliverRunReportResult>;
+  readonly enqueueOutbox: typeof enqueueRunReportOutbox;
+  readonly processOutbox: typeof processRunReportOutbox;
   readonly createLogger: (options: JsonlLoggerOptions) => JsonlLogger;
 }
 
@@ -213,6 +223,8 @@ function resolvedDependencies(
           ...(signal === undefined ? {} : { signal }),
         })),
     deliver: supplied?.deliver ?? deliverRunReport,
+    enqueueOutbox: supplied?.enqueueOutbox ?? enqueueRunReportOutbox,
+    processOutbox: supplied?.processOutbox ?? processRunReportOutbox,
     createLogger: supplied?.createLogger ?? createJsonlLogger,
   };
 }
@@ -231,9 +243,10 @@ function recoveryDraft(authority: RunAuthority): RunReportDraft {
   };
 }
 
-async function logRenderFailure(
+async function logObserverEvent(
   options: RunObserverJobOptions,
   dependencies: ResolvedObserverDependencies,
+  code: string,
 ): Promise<void> {
   try {
     const logger = dependencies.createLogger({
@@ -241,15 +254,16 @@ async function logRenderFailure(
       filePath: join(options.projectRoot, "logs", "observer.jsonl"),
       ...(options.now === undefined ? {} : { now: options.now }),
     });
-    await logger.error(RENDER_FAILURE_CODE);
+    await logger.error(code);
   } catch {
-    // A logging failure must not expose or replace the safe render failure.
+    // Logging must never replace the primary control flow.
   }
 }
 
 interface PreparedFinalReportArtifacts {
   readonly report: RunReport;
-  readonly artifact: ReportCardArtifact | EditorialCardArtifact;
+  readonly artifact?: ReportCardArtifact | EditorialCardArtifact;
+  readonly imageEnabled: boolean;
 }
 
 function issueFromReport(report: RunReport): ReportIssue | null {
@@ -259,12 +273,34 @@ function issueFromReport(report: RunReport): ReportIssue | null {
   return { number: report.issueNumber, label: report.issueLabel };
 }
 
+function visualMode(
+  config: EditorialConfig,
+): "off" | "deterministic" | "editorial" | "legacy" {
+  const mode = (config as { readonly mode?: string }).mode;
+  if (
+    mode === "off" ||
+    mode === "deterministic" ||
+    mode === "legacy" ||
+    mode === "editorial"
+  ) {
+    return mode;
+  }
+  return "editorial";
+}
+
 async function prepareFinalReportArtifacts(
   options: RunObserverJobOptions,
   dependencies: ResolvedObserverDependencies,
   report: RunReport,
   disposition: RunDeliveryDisposition,
 ): Promise<PreparedFinalReportArtifacts> {
+  const imageConfig = dependencies.loadEditorial(options.projectRoot);
+  const mode = visualMode(imageConfig);
+
+  if (mode === "off") {
+    return { report, imageEnabled: false };
+  }
+
   if (report.editorial === undefined) {
     return {
       report,
@@ -272,11 +308,13 @@ async function prepareFinalReportArtifacts(
         projectRoot: options.projectRoot,
         report,
       }),
+      imageEnabled: true,
     };
   }
 
   let finalReport = report;
   let issue = issueFromReport(finalReport);
+  // Numbered report assignment is independent of Image-2 generation mode.
   if (issue === null) {
     if (disposition !== "missing") {
       return {
@@ -285,6 +323,7 @@ async function prepareFinalReportArtifacts(
           projectRoot: options.projectRoot,
           report,
         }),
+        imageEnabled: true,
       };
     }
     issue = await dependencies.assignIssue({
@@ -295,14 +334,14 @@ async function prepareFinalReportArtifacts(
     dependencies.replaceFinalRecord(options.projectRoot, finalReport);
   }
 
-  const imageConfig = dependencies.loadEditorial(options.projectRoot);
-  if (imageConfig.mode === "legacy") {
+  if (mode === "legacy" || mode === "deterministic") {
     return {
       report: finalReport,
       artifact: dependencies.render({
         projectRoot: options.projectRoot,
         report: finalReport,
       }),
+      imageEnabled: true,
     };
   }
 
@@ -319,6 +358,7 @@ async function prepareFinalReportArtifacts(
       report: finalReport,
       visual,
     }),
+    imageEnabled: true,
   };
 }
 
@@ -337,7 +377,7 @@ async function deliverFinalReport(
       disposition,
     );
   } catch {
-    await logRenderFailure(options, dependencies);
+    await logObserverEvent(options, dependencies, RENDER_FAILURE_CODE);
     throw new Error(SAFE_RENDER_ERROR);
   }
 
@@ -347,14 +387,18 @@ async function deliverFinalReport(
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   };
   const sendText = await dependencies.prepareText(senderOptions);
-  const sendImage = await dependencies.prepareImage(senderOptions);
+  const sendImage = prepared.imageEnabled
+    ? await dependencies.prepareImage(senderOptions)
+    : async () => ({ status: "sent" as const });
 
   await dependencies.deliver({
     projectRoot: options.projectRoot,
     report: prepared.report,
     sendText,
     sendImage,
-    imagePath: prepared.artifact.pngPath,
+    ...(prepared.artifact === undefined
+      ? {}
+      : { imagePath: prepared.artifact.pngPath }),
     ...(options.now === undefined ? {} : { now: options.now }),
   });
   return prepared.report;
@@ -385,6 +429,91 @@ function managedDependencies(
   };
 }
 
+function shouldNotify(job: ObserverJob, report: RunReport): boolean {
+  if (job.notify === "always") return true;
+  if (job.notify === "never") return false;
+  return report.status !== "success" && report.status !== "skipped";
+}
+
+async function queueHistoricalReports(
+  options: RunObserverJobOptions,
+  dependencies: ResolvedObserverDependencies,
+  recovery: RecoverInterruptedRunsResult,
+): Promise<void> {
+  for (const authority of recovery.recovered) {
+    const report = recoveredReport(options, dependencies, authority);
+    const disposition = dependencies.deliveryDisposition({
+      projectRoot: options.projectRoot,
+      report,
+    });
+    if (disposition === "missing" || disposition === "retryable") {
+      dependencies.enqueueOutbox({
+        projectRoot: options.projectRoot,
+        report,
+        priority: 10,
+        ...(options.now === undefined ? {} : { now: options.now }),
+      });
+    }
+  }
+
+  for (const report of dependencies.listFinalReports(options.projectRoot)) {
+    const disposition = dependencies.deliveryDisposition({
+      projectRoot: options.projectRoot,
+      report,
+    });
+    if (disposition === "missing" || disposition === "retryable") {
+      dependencies.enqueueOutbox({
+        projectRoot: options.projectRoot,
+        report,
+        priority: 20,
+        ...(options.now === undefined ? {} : { now: options.now }),
+      });
+    }
+  }
+}
+
+async function drainHistoricalOutbox(
+  options: RunObserverJobOptions,
+  dependencies: ResolvedObserverDependencies,
+): Promise<void> {
+  // Historical failures stay in outbox and never bubble into the current job.
+  try {
+    await dependencies.processOutbox({
+      projectRoot: options.projectRoot,
+      historyLimit: OUTBOX_HISTORY_LIMIT,
+      deliver: dependencies.deliver,
+      prepare: async (item) => {
+        const prepared = await prepareFinalReportArtifacts(
+          options,
+          dependencies,
+          item.report,
+          "retryable",
+        );
+        return {
+          report: prepared.report,
+          ...(prepared.artifact === undefined
+            ? {}
+            : { imagePath: prepared.artifact.pngPath }),
+        };
+      },
+      createSenders: async (item) => {
+        const senderOptions = {
+          projectRoot: options.projectRoot,
+          report: item.report,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        };
+        return {
+          sendText: await dependencies.prepareText(senderOptions),
+          sendImage: await dependencies.prepareImage(senderOptions),
+        };
+      },
+      ...(options.now === undefined ? {} : { now: options.now }),
+    });
+  } catch {
+    await logObserverEvent(options, dependencies, "OBSERVER_OUTBOX_DRAIN_FAILED");
+  }
+}
+
 export async function runObserverJob(
   options: RunObserverJobOptions,
 ): Promise<RunReport> {
@@ -396,26 +525,8 @@ export async function runObserverJob(
     ...(options.now === undefined ? {} : { now: options.now }),
   });
 
-  for (const authority of recovery.recovered) {
-    const report = recoveredReport(options, dependencies, authority);
-    const disposition = dependencies.deliveryDisposition({
-      projectRoot: options.projectRoot,
-      report,
-    });
-    if (disposition === "missing" || disposition === "retryable") {
-      await deliverFinalReport(options, dependencies, report, disposition);
-    }
-  }
-
-  for (const report of dependencies.listFinalReports(options.projectRoot)) {
-    const disposition = dependencies.deliveryDisposition({
-      projectRoot: options.projectRoot,
-      report,
-    });
-    if (disposition === "missing" || disposition === "retryable") {
-      await deliverFinalReport(options, dependencies, report, disposition);
-    }
-  }
+  await queueHistoricalReports(options, dependencies, recovery);
+  await drainHistoricalOutbox(options, dependencies);
 
   if (recovery.activeTaskIds.includes(job.id)) {
     throw new ObserverTaskBusyError();
@@ -442,12 +553,29 @@ export async function runObserverJob(
       draft: outcome.draft,
     });
     dependencies.finishRecord(options.projectRoot, report);
-    return await deliverFinalReport(
-      options,
-      dependencies,
-      report,
-      "missing",
-    );
+
+    if (!shouldNotify(job, report)) {
+      return report;
+    }
+
+    try {
+      return await deliverFinalReport(
+        options,
+        dependencies,
+        report,
+        "missing",
+      );
+    } catch (error) {
+      dependencies.enqueueOutbox({
+        projectRoot: options.projectRoot,
+        report,
+        priority: 5,
+        ...(options.now === undefined ? {} : { now: options.now }),
+      });
+      // Current-run failures remain visible to the caller, but the durable
+      // outbox entry ensures a later worker can retry without blocking recovery.
+      throw error;
+    }
   } finally {
     await lock.release();
   }

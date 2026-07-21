@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import {
   readProjectBytes,
+  readPrivateProjectText,
   readProjectText,
   writeProjectTextAtomic,
 } from "../lib/project-file.js";
@@ -63,7 +64,7 @@ export async function assignReportIssue(options: {
       "observer",
       "report-sequence.json",
     );
-    const existing = readProjectText(
+    const existing = readPrivateProjectText(
       options.projectRoot,
       path,
       MAXIMUM_LEDGER_BYTES,

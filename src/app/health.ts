@@ -249,7 +249,8 @@ function status(value: boolean): CheckStatus {
 }
 
 function isNode22(value: string): boolean {
-  return /^v?22(?:\.|$)/u.test(value.trim());
+  const match = /^v?(\d+)(?:\.|$)/u.exec(value.trim());
+  return match !== null && Number(match[1]) >= 22;
 }
 
 function safeLocalPath(
@@ -477,8 +478,14 @@ export function inspectProjectHealth(
         config: imageConfig!,
       }),
     );
-  if (!imageCapabilityReady) {
+  const imageMode = imageConfig === undefined
+    ? "unknown"
+    : ((imageConfig as { readonly mode?: string }).mode ?? "editorial");
+  const imageRequired = imageMode === "editorial";
+  if (imageRequired && !imageCapabilityReady) {
     diagnostics.push("observer image capability unavailable");
+  } else if (!imageRequired && !imageCapabilityReady) {
+    diagnostics.push("observer image enhancement unavailable (optional)");
   }
 
   const sequenceLedgerValid = safeProbe(() =>
@@ -579,13 +586,15 @@ export function inspectProjectHealth(
   if (!observerStateValid || invalidStateRecords > 0) {
     diagnostics.push("observer state check failed");
   }
+  // Image/editorial capability is an optional enhancement. Text digest delivery
+  // only requires observer config, deterministic rendering, and valid state.
   const observerReady =
     observerConfigValid &&
-    rendererReady &&
+    (imageMode === "off" || imageMode === "deterministic" || rendererReady) &&
     imageConfigValid &&
-    imageCapabilityReady &&
+    (!imageRequired || imageCapabilityReady) &&
     sequenceLedgerValid &&
-    visualStateValid &&
+    (imageMode === "off" || visualStateValid) &&
     invalidVisualRecords === 0 &&
     observerStateValid &&
     invalidStateRecords === 0;
@@ -641,3 +650,56 @@ export function inspectProjectHealth(
 export function healthExitCode(report: ProjectHealthReport): 0 | 1 {
   return report.status === "failed" ? 1 : 0;
 }
+
+const REMEDIATION: Record<string, string> = {
+  "Node 22 runtime check failed": "Install Node.js 22+ and re-run from a shell where `node --version` reports v22 or newer.",
+  "configuration check failed": "Run `npm run wechatpilot -- config validate` and fix the reported YAML/schema errors.",
+  "digest prompt check failed": "Restore `prompts/daily-digest.md` from the repository and ensure it is non-empty.",
+  "digest output schema check failed": "Restore `config/digest-output.schema.json` from the repository.",
+  "WeChat transport boundary check failed": "Keep the project-owned transport only; do not reintroduce vendor remote-control packages.",
+  "project directory write check failed": "Ensure `data/`, `output/`, and `logs/` exist and are writable by the current user.",
+  "Codex path check unavailable": "Fix configuration loading first, then re-run doctor.",
+  "Codex configured path check failed": "Install the official Codex CLI on PATH and re-run `npm run wechatpilot -- init`.",
+  "WeChat readiness check failed": "Re-run `./scripts/init-wechat.sh`, scan the QR code, and send the owner binding message.",
+  "observer configuration check failed": "Validate `config/observer-jobs.yaml` and keep the single audited job definition.",
+  "observer renderer check failed": "Reinstall dependencies with `npm ci` so `@resvg/resvg-js` is available.",
+  "observer image configuration check failed": "Validate `config/report-visual.yaml`, or set `mode: off` if images are not required.",
+  "observer image capability unavailable": "Run `npm run report:image-probe` after Codex image generation is enabled, or set `mode: off|deterministic`.",
+  "observer image enhancement unavailable (optional)": "Optional only. Leave disabled, or probe image capability when ready.",
+  "observer sequence state check failed": "Inspect `.state/observer/report-sequence.json` permissions and recover with doctor --repair if needed.",
+  "observer visual pending": "Wait for pending visual attempts to settle, or switch visual mode to off/deterministic.",
+  "observer visual state check failed": "Inspect visual state files under `.state/observer/` for invalid records.",
+  "observer recovery pending": "Allow the next observer run to finish recovery, or inspect interrupted run records.",
+  "observer delivery pending": "Run the outbox/delivery worker path via observer; pending items will retry with limits.",
+  "observer delivery requires review": "An indeterminate delivery needs manual review; do not delete ledgers blindly.",
+  "observer state check failed": "Inspect observer run-state and delivery ledgers for invalid private files.",
+};
+
+export function remediationForDiagnostic(diagnostic: string): string {
+  return REMEDIATION[diagnostic] ?? "Inspect project logs and re-run doctor after applying the nearest documented fix.";
+}
+
+export function formatProjectHealthHuman(report: ProjectHealthReport): string {
+  const lines = [
+    `WeChatPilot doctor: ${report.status}`,
+    `requiredReady: ${report.requiredReady ? "yes" : "no"}`,
+    `runtime: ${report.runtime.status}`,
+    `config: ${report.config.status}`,
+    `transport: ${report.transport.status}`,
+    `directories: ${report.directories.status}`,
+    `codex: ${report.codex.status}`,
+    `wechat: ${report.wechat.status}`,
+    `observer: ${report.observer.status}`,
+    `pendingDeliveries: ${report.observer.pendingDeliveries}`,
+    `indeterminateDeliveries: ${report.observer.indeterminateDeliveries}`,
+  ];
+  if (report.diagnostics.length > 0) {
+    lines.push("diagnostics:");
+    for (const diagnostic of report.diagnostics) {
+      lines.push(`- ${diagnostic}`);
+      lines.push(`  fix: ${remediationForDiagnostic(diagnostic)}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+

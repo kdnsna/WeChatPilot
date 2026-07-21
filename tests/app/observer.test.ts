@@ -130,7 +130,12 @@ const preparedVisual: PreparedReportVisual = {
 function dependencies(
   overrides: Partial<ObserverDependencies> = {},
 ): ObserverDependencies {
-  return {
+  const pendingOutbox: Array<{
+    readonly report: RunReport;
+    readonly imagePath?: string;
+    readonly priority?: number;
+  }> = [];
+  const base: ObserverDependencies = {
     loadConfig: vi.fn(() => config),
     recover: vi.fn(() => ({
       recovered: [],
@@ -186,6 +191,109 @@ function dependencies(
       textAttempt: 1,
       imageAttempt: 1,
     })),
+    enqueueOutbox: vi.fn((options) => {
+      pendingOutbox.push({
+        report: options.report,
+        ...(options.imagePath === undefined ? {} : { imagePath: options.imagePath }),
+        ...(options.priority === undefined ? {} : { priority: options.priority }),
+      });
+      return {
+        version: 1 as const,
+        kind: "run-report" as const,
+        envelope: {
+          version: 1 as const,
+          id: options.report.runId,
+          channel: "run-report-text" as const,
+          payloadSha256: "a".repeat(64),
+          createdAt: "2026-07-20T00:00:00.000Z",
+          priority: options.priority ?? 100,
+          attempt: 0,
+          disposition: "missing" as const,
+        },
+        report: options.report,
+        ...(options.imagePath === undefined ? {} : { imagePath: options.imagePath }),
+      };
+    }),
+    processOutbox: vi.fn(async (options) => {
+      const items = pendingOutbox.splice(0);
+      let sent = 0;
+      for (const item of items) {
+        const prepared =
+          options.prepare === undefined
+            ? {
+                report: item.report,
+                ...(item.imagePath === undefined ? {} : { imagePath: item.imagePath }),
+              }
+            : await options.prepare({
+                version: 1,
+                kind: "run-report",
+                envelope: {
+                  version: 1,
+                  id: item.report.runId,
+                  channel: "run-report-text",
+                  payloadSha256: "a".repeat(64),
+                  createdAt: "2026-07-20T00:00:00.000Z",
+                  priority: item.priority ?? 100,
+                  attempt: 0,
+                  disposition: "missing",
+                },
+                report: item.report,
+                ...(item.imagePath === undefined ? {} : { imagePath: item.imagePath }),
+              });
+        const senders =
+          options.createSenders === undefined
+            ? {
+                sendText:
+                  options.sendText ??
+                  (async () => ({ status: "sent" as const, chunks: 1 })),
+                sendImage:
+                  options.sendImage ??
+                  (async () => ({ status: "sent" as const })),
+              }
+            : await options.createSenders({
+                version: 1,
+                kind: "run-report",
+                envelope: {
+                  version: 1,
+                  id: prepared.report.runId,
+                  channel: "run-report-text",
+                  payloadSha256: "a".repeat(64),
+                  createdAt: "2026-07-20T00:00:00.000Z",
+                  priority: item.priority ?? 100,
+                  attempt: 0,
+                  disposition: "missing",
+                },
+                report: prepared.report,
+                ...(prepared.imagePath === undefined
+                  ? {}
+                  : { imagePath: prepared.imagePath }),
+              });
+        await (options.deliver ?? (async () => ({
+          status: "sent" as const,
+          textChunks: 1,
+          image: "sent" as const,
+          textAttempt: 1,
+          imageAttempt: 1,
+        })))({
+          projectRoot: options.projectRoot,
+          report: prepared.report,
+          sendText: senders.sendText,
+          sendImage: senders.sendImage,
+          ...(prepared.imagePath === undefined
+            ? {}
+            : { imagePath: prepared.imagePath }),
+        });
+        sent += 1;
+      }
+      return {
+        considered: items.length,
+        attempted: items.length,
+        sent,
+        deferred: 0,
+        manualReview: 0,
+        failed: 0,
+      };
+    }),
     createLogger: vi.fn(() => ({
       log: vi.fn(async () => undefined),
       debug: vi.fn(async () => undefined),
@@ -193,6 +301,9 @@ function dependencies(
       warn: vi.fn(async () => undefined),
       error: vi.fn(async () => undefined),
     })),
+  };
+  return {
+    ...base,
     ...overrides,
   };
 }

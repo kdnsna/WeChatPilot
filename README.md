@@ -33,7 +33,7 @@ npm run wechatpilot -- schedule status
 npm run wechatpilot -- schedule remove
 ```
 
-`schedule install` 在安装时探测 Node/Codex，生成当前用户专属 plist。调度时间、时区和日志目录可通过参数调整。`doctor` 默认只读；只有显式 `--repair` 才会删除已确认进程死亡、inode 未变化且未被 `sending/indeterminate` ledger 阻止的陈旧锁。
+`schedule install` 在安装时探测 Node/Codex，生成当前用户专属 plist。调度时间、时区和日志目录可通过参数调整。`doctor` 默认输出人类可读结果（`--json` 保留机器格式），且默认只读；只有显式 `--repair` 才会删除已确认进程死亡、inode 未变化且未被 `sending/indeterminate` ledger 阻止的陈旧锁。
 
 ## 配置模型
 
@@ -57,6 +57,18 @@ CI 会执行生产依赖审计，并禁止重新引入上游主入口、Router�
 - 微信 `message_id` 使用 lossless JSON 解析并在内部、状态文件和去重集合中统一为规范十进制字符串；旧的安全整数状态会自动迁移。
 - 来源链接每一跳只解析一次，验证全部地址均为公网后，把本次已验证地址钉入实际 TCP/TLS 连接；Host 与 TLS SNI 保持原域名，重定向后重新解析和验证。
 - scheduled、日报投递和 observer 锁都记录 PID、nonce、createdAt，并在恢复与释放时核验文件身份。日报锁恢复还受 delivery ledger 约束，无法确认的发送绝不自动重放。
+
+## 隐私与数据流
+
+“本地优先”指调度、凭据、ledger、锁和审计在本地，不代表模型推理完全离线。候选标题、摘要和公开 URL 会进入 Codex 子进程；微信 Token、context token 和用户 ID 不会进入模型。详见 [PRIVACY.md](PRIVACY.md) 与 [DATA_FLOW.md](DATA_FLOW.md)。
+
+## 目录布局
+
+- `appRoot`：程序代码与内置资源
+- `workspaceRoot`：用户配置、输出、历史、日志
+- `stateRoot`：凭据、ledger、锁、outbox
+
+兼容默认仍落在项目目录；可通过 profile root / 环境变量拆分。详见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ## 稳定性门禁
 

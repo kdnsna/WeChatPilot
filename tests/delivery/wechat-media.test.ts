@@ -484,19 +484,21 @@ describe("WeChat report image delivery", () => {
   });
 
   it("rejects same-size metadata changes during the file read", async () => {
-    const { root, imagePath } = projectWithBoundOwner();
-    const originalReadSync = fs.readSync.bind(fs);
+    const { root, imagePath, png } = projectWithBoundOwner();
+    const originalOpenSync = fs.openSync.bind(fs);
     let changed = false;
-    vi.spyOn(fs, "readSync").mockImplementation(
-      ((...args: Parameters<typeof fs.readSync>) => {
-        const bytesRead = originalReadSync(...args);
-        if (!changed) {
+    vi.spyOn(fs, "openSync").mockImplementation(
+      ((...args: Parameters<typeof fs.openSync>) => {
+        // Mutate path metadata after the lexical open but before the caller
+        // snapshots the opened descriptor, simulating a same-size race.
+        if (!changed && typeof args[0] === "string" && args[0] === imagePath) {
           changed = true;
+          writeFileSync(imagePath, png);
           const changedTime = new Date("2030-01-01T00:00:00.000Z");
           fs.utimesSync(imagePath, changedTime, changedTime);
         }
-        return bytesRead;
-      }) as typeof fs.readSync,
+        return originalOpenSync(...args);
+      }) as typeof fs.openSync,
     );
     syncBuiltinESMExports();
     const vendor = adapter([]);

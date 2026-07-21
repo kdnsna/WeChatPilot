@@ -12,4 +12,4 @@ jobs:
     timeoutMs: 1200000
     resultAdapter: scheduled-digest-json-v1
     allowedArtifactRoot: output
-    notify: always
+    notify: on-failure

@@ -17,7 +17,7 @@ jobs:
   quality:
     name: quality
     runs-on: macos-14
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout sources
@@ -34,13 +34,23 @@ jobs:
       - name: Install root dependencies
         run: npm ci
 
+      - name: Governance and portable-path checks
+        run: |
+          npm run check:governance
+          if rg -n '/Users/|/opt/homebrew/|com\.kdnsna' README.md package.json scripts launchd src config .github AGENTS.md CONTRIBUTING.md SUPPORT.md ARCHITECTURE.md PRIVACY.md DATA_FLOW.md COMPATIBILITY.md; then
+            echo 'personal absolute path detected in version-controlled files' >&2
+            exit 1
+          fi
+
       - name: Verify project
         run: |
           npm run audit:runtime
           npm run check:transport-boundary
+          npm run format:check
           npm test
           npm run typecheck
           npm run build
+          npm run wechatpilot -- config validate
 
       - name: Reject upstream remote-control imports
         run: |
@@ -48,3 +58,24 @@ jobs:
             echo 'forbidden WeChat transport import detected' >&2
             exit 1
           fi
+
+  codeql:
+    name: codeql
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3

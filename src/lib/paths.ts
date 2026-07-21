@@ -131,6 +131,9 @@ export function resolveProjectPath(
 
 export interface ProjectPaths {
   readonly root: string;
+  readonly appRoot: string;
+  readonly workspaceRoot: string;
+  readonly stateRoot: string;
   readonly config: string;
   readonly data: string;
   readonly raw: string;
@@ -140,17 +143,32 @@ export interface ProjectPaths {
   readonly state: string;
 }
 
-export function createProjectPaths(projectRoot: string): ProjectPaths {
+export function createProjectPaths(
+  projectRoot: string,
+  layout?: {
+    readonly appRoot?: string;
+    readonly workspaceRoot?: string;
+    readonly stateRoot?: string;
+  },
+): ProjectPaths {
   const root = normalizedProjectRoot(projectRoot);
+  const appRoot = normalizedProjectRoot(layout?.appRoot ?? root);
+  const workspaceRoot = normalizedProjectRoot(layout?.workspaceRoot ?? root);
+  const stateRoot = layout?.stateRoot
+    ? resolve(layout.stateRoot)
+    : resolveProjectPath(workspaceRoot, ".state");
   return Object.freeze({
     root,
-    config: resolveProjectPath(root, "config"),
-    data: resolveProjectPath(root, "data"),
-    raw: resolveProjectPath(root, "data", "raw"),
-    history: resolveProjectPath(root, "data", "history"),
-    output: resolveProjectPath(root, "output"),
-    logs: resolveProjectPath(root, "logs"),
-    state: resolveProjectPath(root, ".state"),
+    appRoot,
+    workspaceRoot,
+    stateRoot,
+    config: resolveProjectPath(appRoot, "config"),
+    data: resolveProjectPath(workspaceRoot, "data"),
+    raw: resolveProjectPath(workspaceRoot, "data", "raw"),
+    history: resolveProjectPath(workspaceRoot, "data", "history"),
+    output: resolveProjectPath(workspaceRoot, "output"),
+    logs: resolveProjectPath(workspaceRoot, "logs"),
+    state: stateRoot,
   });
 }
 

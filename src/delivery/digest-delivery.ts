@@ -13,7 +13,7 @@ import {
   type ScheduledRunLock,
 } from "../app/scheduled-lock.js";
 
-import { readProjectText, writeProjectTextAtomic } from "../lib/project-file.js";
+import { readPrivateProjectText, writeProjectTextAtomic } from "../lib/project-file.js";
 import {
   assertNoSymlinkComponents,
   resolveProjectPath,
@@ -114,7 +114,7 @@ function ledgerPath(projectRoot: string, date: string): string {
 
 function readLedger(projectRoot: string, date: string): DeliveryLedger | null {
   const filePath = ledgerPath(projectRoot, date);
-  const raw = readProjectText(projectRoot, filePath, MAX_LEDGER_BYTES);
+  const raw = readPrivateProjectText(projectRoot, filePath, MAX_LEDGER_BYTES);
   if (raw === null) {
     return null;
   }

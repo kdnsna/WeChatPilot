@@ -71,6 +71,9 @@ describe("project paths", () => {
     const root = projectRoot();
     expect(createProjectPaths(root)).toEqual({
       root,
+      appRoot: root,
+      workspaceRoot: root,
+      stateRoot: resolve(root, ".state"),
       config: resolve(root, "config"),
       data: resolve(root, "data"),
       raw: resolve(root, "data/raw"),
