@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -45,7 +45,7 @@ function parseArguments(arguments_: readonly string[]): {
   readonly jobId: typeof FIXED_JOB;
 } {
   if (
-    arguments_.length !== 4 ||
+    (arguments_.length !== 4 && arguments_.length !== 6) ||
     arguments_[0] !== "--project-root" ||
     arguments_[2] !== "--job" ||
     arguments_[3] !== FIXED_JOB
@@ -56,7 +56,16 @@ function parseArguments(arguments_: readonly string[]): {
   if (projectRoot === undefined || projectRoot.trim() === "") {
     throw new ObserverCliUsageError();
   }
-  return { projectRoot: resolve(projectRoot), jobId: FIXED_JOB };
+  const resolvedRoot = resolve(projectRoot);
+  if (
+    arguments_.length === 6 &&
+    (arguments_[4] !== "--runtime-manifest" ||
+      arguments_[5] === undefined ||
+      resolve(arguments_[5]) !== join(resolvedRoot, ".state", "runtime.json"))
+  ) {
+    throw new ObserverCliUsageError();
+  }
+  return { projectRoot: resolvedRoot, jobId: FIXED_JOB };
 }
 
 function publicErrorName(error: unknown): string {

@@ -53,6 +53,15 @@ describe("observer CLI", () => {
     );
   });
 
+  it("accepts only the project-local runtime manifest path", async () => {
+    const streams = io();
+    const dependencies: ObserverCliDependencies = { run: vi.fn(async () => report()) };
+    await expect(runObserverCli([
+      "--project-root", ROOT, "--job", "daily-tech-digest",
+      "--runtime-manifest", `${ROOT}/.state/runtime.json`,
+    ], streams, dependencies)).resolves.toBe(0);
+  });
+
   it.each([
     { arguments_: [] },
     { arguments_: ["--project-root", ROOT] },
