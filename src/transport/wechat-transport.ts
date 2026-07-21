@@ -34,6 +34,14 @@ export interface WechatTransportCredentials {
   readonly ilinkUserId: string;
 }
 
+export class WechatTransportRedirectError extends Error {
+  override readonly name = "WechatTransportRedirectError";
+
+  constructor() {
+    super("WeChat transport redirect rejected");
+  }
+}
+
 function errorCode(error: unknown): string | undefined {
   let current = error as { readonly code?: unknown; readonly cause?: unknown } | undefined;
   for (let depth = 0; current !== undefined && depth < 6; depth += 1) {
@@ -66,6 +74,10 @@ function delayFor(attempt: number, base: number, maximum: number): number {
   return Math.floor(Math.min(maximum, base * 2 ** attempt) * (0.5 + Math.random() * 0.5));
 }
 
+function isRedirectStatus(status: number): boolean {
+  return status >= 300 && status < 400;
+}
+
 export async function fetchWithRetry(
   url: string,
   options: WechatTransportFetchOptions = {},
@@ -91,7 +103,11 @@ export async function fetchWithRetry(
       ? AbortSignal.timeout(timeoutMs)
       : AbortSignal.any([externalSignal, AbortSignal.timeout(timeoutMs)]);
     try {
-      const response = await fetch(url, { ...init, signal });
+      const response = await fetch(url, { ...init, redirect: "manual", signal });
+      if (isRedirectStatus(response.status)) {
+        await response.body?.cancel();
+        throw new WechatTransportRedirectError();
+      }
       if (
         retryOnHttpError &&
         (response.status === 429 || response.status >= 500) &&
@@ -108,6 +124,9 @@ export async function fetchWithRetry(
       return response;
     } catch (error) {
       lastError = error;
+      if (error instanceof WechatTransportRedirectError) {
+        throw error;
+      }
       if (externalSignal?.aborted) {
         throw externalSignal.reason instanceof Error
           ? externalSignal.reason
@@ -145,7 +164,7 @@ export async function login(
   for (let refresh = 0; refresh < 3; refresh += 1) {
     const qrResponse = await fetchWithRetry(
       `${DEFAULT_BASE_URL}/ilink/bot/get_bot_qrcode?bot_type=3`,
-      { retries: 4, retryOnHttpError: true, timeoutMs: 20_000 },
+      { retries: 4, retryOnHttpError: true, timeoutMs: 20_000, redirect: "manual" },
     );
     if (!qrResponse.ok) {
       throw new Error("WeChat QR request failed");
@@ -168,6 +187,7 @@ export async function login(
           headers: { "iLink-App-ClientVersion": "1" },
           retries: 1,
           timeoutMs: 45_000,
+          redirect: "manual",
         },
       );
       if (!statusResponse.ok) {
