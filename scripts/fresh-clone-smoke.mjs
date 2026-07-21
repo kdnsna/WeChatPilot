@@ -1,31 +1,17 @@
-import { mkdtempSync, rmSync, cpSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-const source = process.cwd();
 const root = mkdtempSync(join(tmpdir(), "wechatpilot-fresh-"));
 try {
-  for (const name of [
-    "package.json",
-    "package-lock.json",
-    "tsconfig.json",
-    "vitest.config.ts",
-    "src",
-    "config",
-    "prompts",
-    "scripts",
-    "tests",
-    "security",
-    "docs",
-    "launchd",
-    "AGENTS.md",
-    "README.md",
-  ]) {
-    if (existsSync(join(source, name))) {
-      cpSync(join(source, name), join(root, name), { recursive: true });
-    }
+  const archive = spawnSync("git", ["archive", "HEAD"], { encoding: null });
+  if (archive.status !== 0) {
+    console.error(archive.stderr?.toString("utf8"));
+    process.exit(archive.status ?? 1);
   }
+  const extract = spawnSync("tar", ["-x", "-C", root], { input: archive.stdout, encoding: "utf8" });
+  if (extract.status !== 0) process.exit(extract.status ?? 1);
   const install = spawnSync("npm", ["ci"], { cwd: root, encoding: "utf8" });
   if (install.status !== 0) {
     console.error(install.stdout, install.stderr);

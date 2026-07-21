@@ -27,7 +27,7 @@ import {
   resolveLayoutRoots,
 } from "../layout/roots.js";
 import { loadConfig } from "../config/load.js";
-import { resolveRuntime } from "../config/runtime.js";
+import { loadRuntimeManifest, resolveRuntime } from "../config/runtime.js";
 import { loadEditorialConfig } from "../observer/editorial-config.js";
 import { loadObserverConfig } from "../observer/config.js";
 import { buildStabilityReview } from "../observer/stability-review.js";
@@ -65,8 +65,8 @@ function writeAtomic(path: string, content: string, mode: number): void {
 
 function initialize(root: string): object {
   const runtime = resolveRuntime();
-  loadConfig(root);
-  loadObserverConfig(root);
+  loadConfig(root, runtime);
+  loadObserverConfig(root, runtime);
   loadEditorialConfig(root);
   const directory = join(root, ".state");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -136,9 +136,10 @@ function inspectLocks(root: string, repair: boolean): object {
 }
 
 function plist(root: string, hour: number, minute: number, timezone: string, logDirectory: string): string {
-  const runtime = resolveRuntime();
+  const runtime = loadRuntimeManifest(root);
   const entrypoint = join(root, "dist", "src", "cli", "observer.js");
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n  <key>Label</key><string>${LABEL}</string>\n  <key>ProgramArguments</key><array><string>${xml(runtime.nodeExecutable)}</string><string>${xml(entrypoint)}</string><string>--project-root</string><string>${xml(root)}</string><string>--job</string><string>daily-tech-digest</string></array>\n  <key>WorkingDirectory</key><string>${xml(root)}</string>\n  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>${hour}</integer><key>Minute</key><integer>${minute}</integer></dict>\n  <key>RunAtLoad</key><true/><key>KeepAlive</key><false/><key>ExitTimeOut</key><integer>30</integer>\n  <key>EnvironmentVariables</key><dict><key>TZ</key><string>${xml(timezone)}</string></dict>\n  <key>StandardOutPath</key><string>${xml(join(logDirectory, "launchd.stdout.log"))}</string>\n  <key>StandardErrorPath</key><string>${xml(join(logDirectory, "launchd.stderr.log"))}</string>\n</dict></plist>\n`;
+  const manifest = join(root, ".state", "runtime.json");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n  <key>Label</key><string>${LABEL}</string>\n  <key>ProgramArguments</key><array><string>${xml(runtime.nodeExecutable)}</string><string>${xml(entrypoint)}</string><string>--project-root</string><string>${xml(root)}</string><string>--job</string><string>daily-tech-digest</string><string>--runtime-manifest</string><string>${xml(manifest)}</string></array>\n  <key>WorkingDirectory</key><string>${xml(root)}</string>\n  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>${hour}</integer><key>Minute</key><integer>${minute}</integer></dict>\n  <key>RunAtLoad</key><true/><key>KeepAlive</key><false/><key>ExitTimeOut</key><integer>30</integer>\n  <key>EnvironmentVariables</key><dict><key>TZ</key><string>${xml(timezone)}</string></dict>\n  <key>StandardOutPath</key><string>${xml(join(logDirectory, "launchd.stdout.log"))}</string>\n  <key>StandardErrorPath</key><string>${xml(join(logDirectory, "launchd.stderr.log"))}</string>\n</dict></plist>\n`;
 }
 
 function schedulePath(): string {
@@ -165,6 +166,9 @@ function schedule(arguments_: readonly string[], root: string): object {
   const minute = Number(option(arguments_, "--minute") ?? "0");
   if (!Number.isInteger(hour) || hour < 0 || hour > 23 || !Number.isInteger(minute) || minute < 0 || minute > 59) throw new Error("Invalid schedule time");
   const timezone = option(arguments_, "--timezone") ?? loadConfig(root).digest.timezone;
+  if (timezone !== "Asia/Shanghai") {
+    throw new Error("v0.1 supports only Asia/Shanghai scheduling");
+  }
   const logDirectory = resolve(option(arguments_, "--log-dir") ?? join(root, "logs"));
   mkdirSync(join(homedir(), "Library", "LaunchAgents"), { recursive: true, mode: 0o700 });
   mkdirSync(logDirectory, { recursive: true, mode: 0o700 });

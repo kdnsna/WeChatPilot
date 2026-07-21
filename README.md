@@ -28,16 +28,16 @@ npm run wechatpilot -- doctor
 npm run wechatpilot -- doctor --repair
 npm run wechatpilot -- config validate
 npm run wechatpilot -- run daily-tech-digest --dry-run
-npm run wechatpilot -- schedule install --hour 8 --minute 0 --timezone Asia/Shanghai
+npm run wechatpilot -- schedule install --hour 8 --minute 0
 npm run wechatpilot -- schedule status
 npm run wechatpilot -- schedule remove
 ```
 
-`schedule install` 在安装时探测 Node/Codex，生成当前用户专属 plist。调度时间、时区和日志目录可通过参数调整。`doctor` 默认输出人类可读结果（`--json` 保留机器格式），且默认只读；只有显式 `--repair` 才会删除已确认进程死亡、inode 未变化且未被 `sending/indeterminate` ledger 阻止的陈旧锁。
+`schedule install` 在安装时探测 Node/Codex，生成当前用户专属 plist。v0.1 固定使用简体中文、`Asia/Shanghai`、每日 08:00 与固定栏目配额；LaunchAgent 日历触发使用机器系统时区，因此运行机器也必须设为 `Asia/Shanghai`。`doctor` 默认输出人类可读结果（`--json` 保留机器格式），且默认只读；只有显式 `--repair` 才会删除已确认进程死亡、inode 未变化且未被 `sending/indeterminate` ledger 阻止的陈旧锁。
 
 ## 配置模型
 
-- `UserConfig`：`config/sources.yaml`、`ranking.yaml`、`digest.yaml` 与 observer 的时间、时区、语言、来源、配额和通知策略。
+- `UserConfig`：`config/sources.yaml`、`ranking.yaml`、`digest.yaml` 与 observer 的来源和通知策略；v0.1 的时区、语言、配额、栏目和篇幅为固定契约。
 - `SecurityProfile`：代码中固定的 Codex 只读参数、禁用工具、stdin-only、输出上限、本人收件人约束和禁止参数。
 - `ResolvedRuntime`：`wechatpilot init` 探测的 Node/Codex 绝对路径、版本与能力，写入私有 `.state/runtime.json`，不进入版本控制。
 

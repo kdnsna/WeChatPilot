@@ -37,7 +37,7 @@ jobs:
       - name: Governance and portable-path checks
         run: |
           npm run check:governance
-          if rg -n '/Users/|/opt/homebrew/|com\.kdnsna' README.md package.json scripts launchd src config .github AGENTS.md CONTRIBUTING.md SUPPORT.md ARCHITECTURE.md PRIVACY.md DATA_FLOW.md COMPATIBILITY.md; then
+          if git ls-files -z | xargs -0 rg -n '/Users/|/opt/homebrew/|com\.kdnsna'; then
             echo 'personal absolute path detected in version-controlled files' >&2
             exit 1
           fi
@@ -47,9 +47,10 @@ jobs:
           npm run audit:runtime
           npm run check:transport-boundary
           npm run format:check
-          npm test
+          npm run test:coverage
           npm run typecheck
           npm run build
+          npm run check:fresh-clone
           npm run wechatpilot -- config validate
 
       - name: Reject upstream remote-control imports
@@ -72,10 +73,10 @@ jobs:
         with:
           persist-credentials: false
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@ddf5ce7296213f5548c91e2dd19df2d77d2b2d66 # v3
         with:
           languages: javascript-typescript
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@ddf5ce7296213f5548c91e2dd19df2d77d2b2d66 # v3
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@ddf5ce7296213f5548c91e2dd19df2d77d2b2d66 # v3

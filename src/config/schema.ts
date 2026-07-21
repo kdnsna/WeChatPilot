@@ -371,27 +371,24 @@ const codexConfigSchema = z
 export const DigestConfigSchema = z
   .object({
     version: z.literal(1),
-    timezone: z.string().min(1).max(128),
-    language: z.enum(["zh-CN", "en"]).default("zh-CN"),
+    timezone: z.literal("Asia/Shanghai"),
+    language: z.literal("zh-CN"),
     windowHours: z.number().int().min(1).max(168),
     quotas: z
       .object({
-        community: z.number().int().min(0).max(20),
-        news: z.number().int().min(0).max(20),
-        github: z.number().int().min(0).max(20),
-        deepReading: z.number().int().min(0).max(20),
+        community: z.literal(3),
+        news: z.literal(5),
+        github: z.literal(3),
+        deepReading: z.literal(2),
       })
       .strict(),
     length: z
       .object({
         unit: z.literal("chinese-characters"),
-        min: z.number().int().min(500).max(20_000),
-        max: z.number().int().min(501).max(20_000),
+        min: z.literal(2_000),
+        max: z.literal(3_000),
       })
-      .strict()
-      .refine((length) => length.min < length.max, {
-        message: "digest minimum length must be lower than maximum length",
-      }),
+      .strict(),
     codex: codexConfigSchema,
   })
   .strict();
