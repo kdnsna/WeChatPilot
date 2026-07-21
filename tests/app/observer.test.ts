@@ -854,4 +854,24 @@ describe("observer orchestration", () => {
     expect(listFinalRunReports(root)).toEqual([report(CURRENT_ID)]);
     expect(release).toHaveBeenCalledOnce();
   });
+
+  it("enqueues the numbered canonical editorial report when image delivery is rejected", async () => {
+    const enqueued: RunReport[] = [];
+    const deps = dependencies({
+      normalize: vi.fn(() => editorialReport(CURRENT_ID)),
+      deliver: vi.fn(async () => {
+        throw new WechatDeliveryRejectedError();
+      }),
+      enqueueOutbox: vi.fn((options) => {
+        enqueued.push(options.report);
+        return dependencies().enqueueOutbox!(options);
+      }),
+    });
+
+    await expect(
+      runObserverJob({ projectRoot: ROOT, jobId: job.id, dependencies: deps }),
+    ).rejects.toBeInstanceOf(WechatDeliveryRejectedError);
+
+    expect(enqueued).toEqual([numberedEditorialReport(CURRENT_ID)]);
+  });
 });

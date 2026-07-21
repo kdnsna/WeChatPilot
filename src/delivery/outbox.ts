@@ -101,6 +101,26 @@ export function enqueueRunReportOutbox(options: {
   const id = report.runId;
   const existing = readItem(options.projectRoot, id);
   if (existing !== null) {
+    const payloadSha256 = stableHash(report);
+    if (existing.envelope.payloadSha256 === payloadSha256) {
+      return existing;
+    }
+    if (
+      existing.envelope.disposition === "missing" &&
+      existing.envelope.attempt === 0
+    ) {
+      const updated: OutboxItem = {
+        ...existing,
+        envelope: {
+          ...existing.envelope,
+          payloadSha256,
+        },
+        report,
+        ...(options.imagePath === undefined ? {} : { imagePath: options.imagePath }),
+      };
+      writeItem(options.projectRoot, updated);
+      return updated;
+    }
     return existing;
   }
   const item: OutboxItem = {

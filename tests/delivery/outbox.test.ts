@@ -106,4 +106,20 @@ describe("delivery outbox", () => {
     ) as { envelope: { disposition: string } };
     expect(stored.envelope.disposition).toBe("manual-review");
   });
+
+  it("replaces an unattempted payload with the canonical finalized report", () => {
+    const root = project();
+    const initial = report("018f514c-1a2b-7abc-8def-1234567890c2");
+    const canonical: RunReport = {
+      ...initial,
+      issueNumber: 7,
+      issueLabel: "WP-000007",
+    };
+    const initialItem = enqueueRunReportOutbox({ projectRoot: root, report: initial });
+
+    const item = enqueueRunReportOutbox({ projectRoot: root, report: canonical });
+
+    expect(item.report).toEqual(canonical);
+    expect(item.envelope.payloadSha256).not.toBe(initialItem.envelope.payloadSha256);
+  });
 });

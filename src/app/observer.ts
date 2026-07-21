@@ -58,6 +58,7 @@ import {
 import {
   attachIssue,
   buildRunReport,
+  RunReportSchema,
   type BuildRunReportOptions,
   type RunAuthority,
   type RunReport,
@@ -386,27 +387,44 @@ async function deliverFinalReport(
     throw new Error(SAFE_RENDER_ERROR);
   }
 
-  const senderOptions = {
-    projectRoot: options.projectRoot,
-    report: prepared.report,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  };
-  const sendText = await dependencies.prepareText(senderOptions);
-  const sendImage = prepared.imageEnabled
-    ? await dependencies.prepareImage(senderOptions)
-    : async () => ({ status: "sent" as const });
+  try {
+    const senderOptions = {
+      projectRoot: options.projectRoot,
+      report: prepared.report,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    };
+    const sendText = await dependencies.prepareText(senderOptions);
+    const sendImage = prepared.imageEnabled
+      ? await dependencies.prepareImage(senderOptions)
+      : async () => ({ status: "sent" as const });
 
-  await dependencies.deliver({
-    projectRoot: options.projectRoot,
-    report: prepared.report,
-    sendText,
-    sendImage,
-    ...(prepared.artifact === undefined
-      ? {}
-      : { imagePath: prepared.artifact.pngPath }),
-    ...(options.now === undefined ? {} : { now: options.now }),
-  });
+    await dependencies.deliver({
+      projectRoot: options.projectRoot,
+      report: prepared.report,
+      sendText,
+      sendImage,
+      ...(prepared.artifact === undefined
+        ? {}
+        : { imagePath: prepared.artifact.pngPath }),
+      ...(options.now === undefined ? {} : { now: options.now }),
+    });
+  } catch (error) {
+    if (typeof error === "object" && error !== null) {
+      Object.defineProperty(error, "canonicalReport", {
+        value: prepared.report,
+        enumerable: false,
+      });
+    }
+    throw error;
+  }
   return prepared.report;
+}
+
+function canonicalReportFromError(error: unknown, fallback: RunReport): RunReport {
+  if (typeof error !== "object" || error === null) return fallback;
+  const candidate = (error as { readonly canonicalReport?: unknown }).canonicalReport;
+  const parsed = RunReportSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : fallback;
 }
 
 function recoveredReport(
@@ -599,7 +617,7 @@ export async function runObserverJob(
     } catch (error) {
       dependencies.enqueueOutbox({
         projectRoot: options.projectRoot,
-        report,
+        report: canonicalReportFromError(error, report),
         priority: 5,
         ...(options.now === undefined ? {} : { now: options.now }),
       });
