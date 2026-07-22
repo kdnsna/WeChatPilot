@@ -63,7 +63,7 @@ jobs:
 
       - name: Reject upstream remote-control imports
         run: |
-          if rg -n 'vendor/cli-in-wechat|bridge/router|adapters/registry|/dist/index|initProxyFromEnv|ProxyAgent|from ["'"']undici' src; then
+          if rg -n "vendor/cli-in-wechat|bridge/router|adapters/registry|/dist/index|initProxyFromEnv|ProxyAgent|from [\"']undici" src; then
             echo 'forbidden WeChat transport import detected' >&2
             exit 1
           fi
