@@ -34,6 +34,14 @@ jobs:
       - name: Install root dependencies
         run: npm ci
 
+      - name: Prepare deterministic test runtime
+        run: |
+          test_runtime_dir="$RUNNER_TEMP/wechatpilot-test-runtime"
+          mkdir -p "$test_runtime_dir"
+          cp scripts/ci-fake-codex.mjs "$test_runtime_dir/codex"
+          chmod 755 "$test_runtime_dir/codex"
+          echo "$test_runtime_dir" >> "$GITHUB_PATH"
+
       - name: Governance and portable-path checks
         run: |
           npm run check:governance
