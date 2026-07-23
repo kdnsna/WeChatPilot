@@ -6,7 +6,7 @@
 
 > Local-first, outbound-only, auditable AI automation for WeChat.
 
-![WeChatPilot offline demo preview](docs/assets/demo-preview.png)
+![WeChatPilot 20-second offline demo](docs/assets/demo.gif)
 
 当前版本：**Public Preview `v0.1.0-beta.1`**。这不是 Stable，也不是 Production Ready。七日稳定性复盘（Issue #4）完成前，不得宣称链路已经稳定。
 
