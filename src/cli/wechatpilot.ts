@@ -31,6 +31,7 @@ import { loadRuntimeManifest, resolveRuntime } from "../config/runtime.js";
 import { loadEditorialConfig } from "../observer/editorial-config.js";
 import { loadObserverConfig } from "../observer/config.js";
 import { buildStabilityReview } from "../observer/stability-review.js";
+import { runOfflineDemo } from "./demo.js";
 
 const LABEL = "io.wechatpilot.daily-tech-digest";
 
@@ -233,10 +234,13 @@ export async function runWechatPilot(arguments_: readonly string[]): Promise<obj
     return { ok: true, status: result.status };
   }
   if (arguments_[0] === "schedule") return schedule(arguments_, root);
+  if (arguments_[0] === "demo") {
+    return runOfflineDemo({ projectRoot: root });
+  }
   if (arguments_[0] === "stability" && arguments_[1] === "review") {
     return buildStabilityReview(root);
   }
-  throw new Error("Usage: wechatpilot <init|doctor|config validate|run daily-tech-digest --dry-run|schedule install|status|remove>");
+  throw new Error("Usage: wechatpilot <init|doctor|demo|config validate|run daily-tech-digest --dry-run|schedule install|status|remove>");
 }
 
 async function main(): Promise<void> {

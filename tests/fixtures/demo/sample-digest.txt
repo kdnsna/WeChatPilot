@@ -1,0 +1,22 @@
+《科技与灵感日报｜Public Preview Demo》
+
+一、今日技术社区热议
+
+【1】本地优先自动化把结果安全送达微信
+发生了什么：WeChatPilot 演示如何把本机 AI 任务结果单向投递给已绑定本人微信。
+为什么热：开发者希望看到自动化结果，但不希望微信反向控制电脑。
+原文：https://github.com/kdnsna/WeChatPilot
+
+【2】不确定发送必须 fail-closed
+发生了什么：当投递结果无法确认时，默认停止自动重放，避免重复发送。
+为什么热：可审计状态与幂等 ledger 是本地自动化的关键安全边界。
+原文：https://github.com/kdnsna/WeChatPilot
+
+【3】最小权限 Codex 子进程
+发生了什么：候选数据仅通过 stdin 进入只读、非交互、临时 Codex 子进程。
+为什么热：公开预览版本明确禁止微信入站命令、远程 Shell 与 Codex 远程控制。
+原文：https://github.com/kdnsna/WeChatPilot
+
+二、今日一句判断
+
+让本地 AI 自动化安全地抵达微信，而不是让微信反向控制电脑。
