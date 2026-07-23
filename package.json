@@ -2,7 +2,7 @@
   "name": "wechatpilot",
   "version": "0.1.0",
   "private": true,
-  "description": "Local-first AI automation for WeChat",
+  "description": "Local-first, outbound-only AI automation for WeChat",
   "license": "MIT",
   "homepage": "https://github.com/kdnsna/WeChatPilot#readme",
   "bugs": {
