@@ -40,6 +40,8 @@ jobs:
           mkdir -p "$test_runtime_dir"
           cp scripts/ci-fake-codex.mjs "$test_runtime_dir/codex"
           chmod 755 "$test_runtime_dir/codex"
+          export PATH="$test_runtime_dir:$PATH"
+          npm run wechatpilot -- init
           echo "$test_runtime_dir" >> "$GITHUB_PATH"
 
       - name: Governance and portable-path checks
