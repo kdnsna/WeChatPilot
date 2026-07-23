@@ -6,7 +6,7 @@
 
 Let local AI automation reach WeChat safely — without letting WeChat control your computer.
 
-![WeChatPilot offline demo preview](docs/assets/demo-preview.png)
+![WeChatPilot 20-second offline demo](docs/assets/demo.gif)
 
 Current release: **Public Preview `v0.1.0-beta.1`**. This is not Stable and not Production Ready. Until the seven-day stability review (Issue #4) is complete, do not claim the pipeline is already stable.
 
