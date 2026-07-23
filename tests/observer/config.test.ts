@@ -10,6 +10,7 @@ import {
   findObserverJob,
   loadObserverConfig,
 } from "../../src/observer/config.js";
+import { fakeRuntime, writeRuntimeManifest } from "../helpers/runtime.js";
 
 const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 const temporaryRoots: string[] = [];
@@ -36,6 +37,7 @@ function writeRawConfig(contents: string): string {
   const root = mkdtempSync(join(tmpdir(), "wechatpilot-observer-config-"));
   mkdirSync(join(root, "config"));
   writeFileSync(join(root, "config", "observer-jobs.yaml"), contents, "utf8");
+  writeRuntimeManifest(root);
   temporaryRoots.push(root);
   return root;
 }
@@ -48,7 +50,7 @@ afterEach(() => {
 
 describe("loadObserverConfig", () => {
   it("loads the single audited observer job from the real configuration", () => {
-    const config = loadObserverConfig(projectRoot);
+    const config = loadObserverConfig(projectRoot, fakeRuntime());
 
     expect(config.version).toBe(1);
     expect(config.jobs).toHaveLength(1);
@@ -147,13 +149,13 @@ describe("loadObserverConfig", () => {
 
 describe("findObserverJob", () => {
   it("returns the audited job by id", () => {
-    const config = loadObserverConfig(projectRoot);
+    const config = loadObserverConfig(projectRoot, fakeRuntime());
 
     expect(findObserverJob(config, "daily-tech-digest")).toBe(config.jobs[0]);
   });
 
   it("throws a fixed message without echoing an unknown id", () => {
-    const config = loadObserverConfig(projectRoot);
+    const config = loadObserverConfig(projectRoot, fakeRuntime());
 
     expect(() => findObserverJob(config, "private-user-input")).toThrow(
       /^Unknown observer job$/u,

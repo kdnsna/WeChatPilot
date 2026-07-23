@@ -22,6 +22,7 @@ import {
   type CodexImageDependencies,
 } from "../../src/observer/codex-image.js";
 import { loadEditorialConfig } from "../../src/observer/editorial-config.js";
+import { fakeRuntime, writeRuntimeManifest } from "../helpers/runtime.js";
 import { attachIssue, buildRunReport } from "../../src/observer/run-report.js";
 import type { ReportIssue } from "../../src/observer/report-sequence.js";
 import { validEditorialPayload } from "../helpers/editorial.js";
@@ -221,7 +222,7 @@ describe("audited Codex-generated hero ingestion", () => {
       "/Users/example/.codex/generated_images",
       generatedImagesRoot,
     );
-    const config = loadEditorialConfig(root);
+    const config = loadEditorialConfig(root, fakeRuntime());
 
     const result = await generateCodexHero({
       projectRoot: root,
@@ -267,7 +268,7 @@ describe("audited Codex-generated hero ingestion", () => {
       projectRoot: root,
       report: report(root),
       issue: ISSUE,
-      config: loadEditorialConfig(root),
+      config: loadEditorialConfig(root, fakeRuntime()),
       dependencies: deps,
     });
 
@@ -296,7 +297,7 @@ describe("audited Codex-generated hero ingestion", () => {
         projectRoot: root,
         report: report(root),
         issue: ISSUE,
-        config: loadEditorialConfig(root),
+        config: loadEditorialConfig(root, fakeRuntime()),
         dependencies: dependencies(generatedImagesRoot, eventStream(path)),
       }),
       "artifact",
@@ -316,7 +317,7 @@ describe("audited Codex-generated hero ingestion", () => {
         projectRoot: root,
         report: report(root),
         issue: ISSUE,
-        config: loadEditorialConfig(root),
+        config: loadEditorialConfig(root, fakeRuntime()),
         dependencies: dependencies(generatedImagesRoot, eventStream(link)),
       }),
       "artifact",
@@ -338,7 +339,7 @@ describe("audited Codex-generated hero ingestion", () => {
         projectRoot: root,
         report: report(root),
         issue: ISSUE,
-        config: loadEditorialConfig(root),
+        config: loadEditorialConfig(root, fakeRuntime()),
         dependencies: dependencies(generatedImagesRoot, eventStream(path)),
       }),
       kind,
@@ -353,7 +354,7 @@ describe("audited Codex-generated hero ingestion", () => {
         projectRoot: root,
         report: report(root),
         issue: ISSUE,
-        config: loadEditorialConfig(root),
+        config: loadEditorialConfig(root, fakeRuntime()),
         dependencies: dependencies(
           generatedImagesRoot,
           readFileSync(UNEXPECTED_TOOL_FIXTURE, "utf8"),

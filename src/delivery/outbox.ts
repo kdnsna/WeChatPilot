@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 
 import { z } from "zod";
@@ -21,6 +20,7 @@ import { RunReportSchema } from "../observer/run-report.js";
 import {
   deliverRunReport,
   runDeliveryDisposition,
+  runReportSha256,
   type DeliverRunReportOptions,
   type DeliverRunReportResult,
 } from "./run-report-delivery.js";
@@ -37,7 +37,23 @@ const OutboxItemSchema = z
     imagePath: z.string().min(1).max(4_096).optional(),
     lastErrorClass: z.string().min(1).max(128).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((item, context) => {
+    if (item.envelope.id !== item.report.runId) {
+      context.addIssue({
+        code: "custom",
+        path: ["envelope", "id"],
+        message: "outbox id must match report.runId",
+      });
+    }
+    if (item.envelope.payloadSha256 !== runReportSha256(item.report)) {
+      context.addIssue({
+        code: "custom",
+        path: ["envelope", "payloadSha256"],
+        message: "outbox payload hash must match canonical report",
+      });
+    }
+  });
 
 export type OutboxItem = z.infer<typeof OutboxItemSchema>;
 
@@ -83,12 +99,6 @@ function itemPath(projectRoot: string, id: string): string {
   );
 }
 
-function stableHash(value: unknown): string {
-  return createHash("sha256")
-    .update(JSON.stringify(value), "utf8")
-    .digest("hex");
-}
-
 export function enqueueRunReportOutbox(options: {
   readonly projectRoot: string;
   readonly report: RunReport;
@@ -99,9 +109,9 @@ export function enqueueRunReportOutbox(options: {
   const report = RunReportSchema.parse(options.report);
   const now = (options.now ?? (() => new Date()))();
   const id = report.runId;
+  const payloadSha256 = runReportSha256(report);
   const existing = readItem(options.projectRoot, id);
   if (existing !== null) {
-    const payloadSha256 = stableHash(report);
     if (existing.envelope.payloadSha256 === payloadSha256) {
       return existing;
     }
@@ -130,7 +140,7 @@ export function enqueueRunReportOutbox(options: {
       version: 1,
       id,
       channel: "run-report-text",
-      payloadSha256: stableHash(report),
+      payloadSha256,
       createdAt: now.toISOString(),
       priority: options.priority ?? (report.status === "success" ? 100 : 50),
       attempt: 0,
@@ -285,6 +295,17 @@ export async function processRunReportOutbox(
         sent += 1;
         continue;
       }
+      if (
+        disposition === "not-required" ||
+        disposition === "notification-disabled"
+      ) {
+        writeItem(options.projectRoot, {
+          ...item,
+          envelope: { ...item.envelope, disposition: "sent" },
+        });
+        sent += 1;
+        continue;
+      }
       if (disposition === "indeterminate" || disposition === "blocked") {
         writeItem(options.projectRoot, {
           ...item,
@@ -308,13 +329,15 @@ export async function processRunReportOutbox(
                 : { imagePath: item.imagePath }),
             }
           : await options.prepare(item);
+      const preparedReport = RunReportSchema.parse(prepared.report);
+      const preparedHash = runReportSha256(preparedReport);
 
       let sendText = options.sendText;
       let sendImage = options.sendImage;
       if (options.createSenders !== undefined) {
         const senders = await options.createSenders({
           ...item,
-          report: prepared.report,
+          report: preparedReport,
           ...(prepared.imagePath === undefined
             ? {}
             : { imagePath: prepared.imagePath }),
@@ -327,9 +350,25 @@ export async function processRunReportOutbox(
         continue;
       }
 
+      // Persist the canonical report/hash before any network send so retries
+      // share the same payload identity as the delivery ledger.
+      const preparedItem: OutboxItem = {
+        ...item,
+        report: preparedReport,
+        ...(prepared.imagePath === undefined
+          ? {}
+          : { imagePath: prepared.imagePath }),
+        envelope: {
+          ...item.envelope,
+          id: preparedReport.runId,
+          payloadSha256: preparedHash,
+        },
+      };
+      writeItem(options.projectRoot, preparedItem);
+
       await deliver({
         projectRoot: options.projectRoot,
-        report: prepared.report,
+        report: preparedReport,
         sendText,
         sendImage,
         ...(prepared.imagePath === undefined
@@ -338,14 +377,10 @@ export async function processRunReportOutbox(
         now,
       });
       writeItem(options.projectRoot, {
-        ...item,
-        report: prepared.report,
-        ...(prepared.imagePath === undefined
-          ? {}
-          : { imagePath: prepared.imagePath }),
+        ...preparedItem,
         envelope: {
-          ...item.envelope,
-          attempt: item.envelope.attempt + 1,
+          ...preparedItem.envelope,
+          attempt: preparedItem.envelope.attempt + 1,
           disposition: "sent",
         },
       });

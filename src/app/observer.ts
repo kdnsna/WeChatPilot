@@ -80,6 +80,7 @@ import {
 } from "../observer/task-lock.js";
 import { buildStatusEditorialReport } from "../report/editorial.js";
 import { shanghaiDateKey } from "../lib/time.js";
+import type { ResolvedRuntime } from "../config/runtime.js";
 
 const RECOVERY_SUMMARY = "任务因主机或进程中断，已在恢复后补记";
 const RENDER_FAILURE_CODE = "OBSERVER_REPORT_RENDER_FAILED";
@@ -93,7 +94,10 @@ interface PrepareObserverSenderOptions {
 }
 
 export interface ObserverDependencies {
-  readonly loadConfig?: (projectRoot: string) => ObserverConfig;
+  readonly loadConfig?: (
+    projectRoot: string,
+    runtime?: ResolvedRuntime,
+  ) => ObserverConfig;
   readonly recover?: (
     options: RecoverInterruptedRunsOptions,
   ) => RecoverInterruptedRunsResult;
@@ -136,6 +140,7 @@ export interface ObserverDependencies {
 export interface RunObserverJobOptions {
   readonly projectRoot: string;
   readonly jobId: "daily-tech-digest";
+  readonly runtime?: ResolvedRuntime;
   readonly signal?: AbortSignal;
   readonly environment?: NodeJS.ProcessEnv;
   readonly now?: () => Date;
@@ -147,7 +152,10 @@ export interface RunObserverJobOptions {
 }
 
 interface ResolvedObserverDependencies {
-  readonly loadConfig: (projectRoot: string) => ObserverConfig;
+  readonly loadConfig: (
+    projectRoot: string,
+    runtime?: ResolvedRuntime,
+  ) => ObserverConfig;
   readonly recover: (
     options: RecoverInterruptedRunsOptions,
   ) => RecoverInterruptedRunsResult;
@@ -163,7 +171,10 @@ interface ResolvedObserverDependencies {
   readonly runJob: (options: RunManagedJobOptions) => Promise<ManagedJobOutcome>;
   readonly normalize: (options: BuildRunReportOptions) => RunReport;
   readonly finishRecord: (projectRoot: string, report: RunReport) => void;
-  readonly loadEditorial: (projectRoot: string) => EditorialConfig;
+  readonly loadEditorial: (
+    projectRoot: string,
+    runtime?: ResolvedRuntime,
+  ) => EditorialConfig;
   readonly assignIssue: (options: {
     readonly projectRoot: string;
     readonly runId: string;
@@ -300,7 +311,10 @@ async function prepareFinalReportArtifacts(
   report: RunReport,
   disposition: RunDeliveryDisposition,
 ): Promise<PreparedFinalReportArtifacts> {
-  const imageConfig = dependencies.loadEditorial(options.projectRoot);
+  const imageConfig = dependencies.loadEditorial(
+    options.projectRoot,
+    options.runtime,
+  );
   const mode = visualMode(imageConfig);
 
   if (mode === "off") {
@@ -458,6 +472,26 @@ function shouldNotify(job: ObserverJob, report: RunReport): boolean {
   return report.status !== "success" && report.status !== "skipped";
 }
 
+function notificationDisposition(
+  job: ObserverJob,
+): "not-required" | "notification-disabled" {
+  return job.notify === "never" ? "notification-disabled" : "not-required";
+}
+
+function reconcileSuppressedReport(
+  options: RunObserverJobOptions,
+  dependencies: ResolvedObserverDependencies,
+  report: RunReport,
+  job: ObserverJob,
+): void {
+  dependencies.recordNotificationDisposition({
+    projectRoot: options.projectRoot,
+    report,
+    disposition: notificationDisposition(job),
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
+}
+
 async function queueHistoricalReports(
   options: RunObserverJobOptions,
   dependencies: ResolvedObserverDependencies,
@@ -473,6 +507,7 @@ async function queueHistoricalReports(
       continue;
     }
     if (!shouldNotify(reportJob, report)) {
+      reconcileSuppressedReport(options, dependencies, report, reportJob);
       continue;
     }
     const disposition = dependencies.deliveryDisposition({
@@ -497,6 +532,7 @@ async function queueHistoricalReports(
       continue;
     }
     if (!shouldNotify(reportJob, report)) {
+      reconcileSuppressedReport(options, dependencies, report, reportJob);
       continue;
     }
     const disposition = dependencies.deliveryDisposition({
@@ -560,7 +596,10 @@ export async function runObserverJob(
   options: RunObserverJobOptions,
 ): Promise<RunReport> {
   const dependencies = resolvedDependencies(options.dependencies);
-  const config = dependencies.loadConfig(options.projectRoot);
+  const config = dependencies.loadConfig(
+    options.projectRoot,
+    options.runtime,
+  );
   const job = findObserverJob(config, options.jobId);
   const recovery = dependencies.recover({
     projectRoot: options.projectRoot,

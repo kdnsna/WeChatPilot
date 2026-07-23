@@ -13,7 +13,7 @@ import {
   type RankingConfig,
   type SourcesConfig,
 } from "./schema.js";
-import { loadRuntimeManifest, resolveRuntime, resolveRuntimePlaceholders, type ResolvedRuntime } from "./runtime.js";
+import { loadRuntimeManifest, resolveRuntimePlaceholders, type ResolvedRuntime } from "./runtime.js";
 import { loadSecurityProfile } from "./security-profile.js";
 
 export interface ProjectConfig {
@@ -36,14 +36,9 @@ function loadYaml<T>(path: string, schema: ZodType<T>, label: string): T {
 
 export function loadConfig(projectRoot: string = process.cwd(), runtime?: ResolvedRuntime): ProjectConfig {
   const configDirectory = join(projectRoot, "config");
-  let resolvedRuntime = runtime;
-  if (resolvedRuntime === undefined) {
-    try {
-      resolvedRuntime = loadRuntimeManifest(projectRoot);
-    } catch {
-      resolvedRuntime = resolveRuntime();
-    }
-  }
+  // Runtime discovery is reserved for init/doctor repair. Normal loads use the
+  // authoritative project manifest or an explicitly supplied runtime.
+  const resolvedRuntime = runtime ?? loadRuntimeManifest(projectRoot);
   const security = loadSecurityProfile(projectRoot);
 
   return {

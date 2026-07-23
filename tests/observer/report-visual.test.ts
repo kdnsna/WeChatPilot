@@ -17,6 +17,7 @@ import {
   type GeneratedHeroArtifact,
 } from "../../src/observer/codex-image.js";
 import { loadEditorialConfig } from "../../src/observer/editorial-config.js";
+import { fakeRuntime, writeRuntimeManifest } from "../helpers/runtime.js";
 import {
   inspectReportVisuals,
   prepareReportVisual,
@@ -136,7 +137,7 @@ describe("private report visual lifecycle", () => {
       projectRoot: root,
       report: report(root),
       issue: ISSUE,
-      config: loadEditorialConfig(root),
+      config: loadEditorialConfig(root, fakeRuntime()),
       generate: generateTwiceThenSucceed,
       sleep: async (milliseconds) => {
         delays.push(milliseconds);
@@ -174,7 +175,7 @@ describe("private report visual lifecycle", () => {
       projectRoot: root,
       report: report(root),
       issue: ISSUE,
-      config: loadEditorialConfig(root),
+      config: loadEditorialConfig(root, fakeRuntime()),
       generate: failIfCalled,
       sleep: async () => undefined,
     });
@@ -193,7 +194,7 @@ describe("private report visual lifecycle", () => {
         projectRoot: root,
         report: report(root),
         issue: ISSUE,
-        config: loadEditorialConfig(root),
+        config: loadEditorialConfig(root, fakeRuntime()),
         generate: aborting,
         sleep: async () => undefined,
       }),
@@ -208,7 +209,7 @@ describe("private report visual lifecycle", () => {
       projectRoot: root,
       report: report(root),
       issue: ISSUE,
-      config: loadEditorialConfig(root),
+      config: loadEditorialConfig(root, fakeRuntime()),
       generate: async () => artifact,
       sleep: async () => undefined,
     });
@@ -225,7 +226,7 @@ describe("private report visual lifecycle", () => {
       projectRoot: root,
       report: report(root),
       issue: ISSUE,
-      config: loadEditorialConfig(root),
+      config: loadEditorialConfig(root, fakeRuntime()),
       generate: failing,
       sleep: async () => undefined,
     });
@@ -246,7 +247,7 @@ describe("private report visual lifecycle", () => {
       projectRoot: root,
       report: report(root),
       issue: ISSUE,
-      config: loadEditorialConfig(root),
+      config: loadEditorialConfig(root, fakeRuntime()),
       generate: async () => {
         throw new Error("fallback visual must be reused");
       },
@@ -267,7 +268,7 @@ describe("private report visual lifecycle", () => {
         projectRoot: root,
         report: report(root),
         issue: ISSUE,
-        config: loadEditorialConfig(root),
+        config: loadEditorialConfig(root, fakeRuntime()),
         generate: async () => {
           calls += 1;
           if (calls < 3) {
@@ -285,7 +286,7 @@ describe("private report visual lifecycle", () => {
       projectRoot: root,
       report: report(root),
       issue: ISSUE,
-      config: loadEditorialConfig(root),
+      config: loadEditorialConfig(root, fakeRuntime()),
       generate: mustNotRun,
       sleep: async () => undefined,
     });
@@ -314,7 +315,7 @@ describe("visual state inspection", () => {
       projectRoot: root,
       report: report(root),
       issue: ISSUE,
-      config: loadEditorialConfig(root),
+      config: loadEditorialConfig(root, fakeRuntime()),
       generate: async () => {
         throw new CodexImageError("failed");
       },

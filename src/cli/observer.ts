@@ -5,6 +5,7 @@ import {
   runObserverJob,
   type RunObserverJobOptions,
 } from "../app/observer.js";
+import { loadRuntimeManifest, type ResolvedRuntime } from "../config/runtime.js";
 import {
   RunReportDeliveryBlockedError,
   RunReportDeliveryBusyError,
@@ -29,6 +30,7 @@ export interface ObserverCliIo {
 
 export interface ObserverCliDependencies {
   readonly run?: (options: RunObserverJobOptions) => ReturnType<typeof runObserverJob>;
+  readonly loadRuntime?: (projectRoot: string) => ResolvedRuntime;
 }
 
 class ObserverCliUsageError extends Error {
@@ -43,6 +45,7 @@ const processIo: ObserverCliIo = {
 function parseArguments(arguments_: readonly string[]): {
   readonly projectRoot: string;
   readonly jobId: typeof FIXED_JOB;
+  readonly runtimeManifestPath?: string;
 } {
   if (
     (arguments_.length !== 4 && arguments_.length !== 6) ||
@@ -57,13 +60,19 @@ function parseArguments(arguments_: readonly string[]): {
     throw new ObserverCliUsageError();
   }
   const resolvedRoot = resolve(projectRoot);
-  if (
-    arguments_.length === 6 &&
-    (arguments_[4] !== "--runtime-manifest" ||
+  if (arguments_.length === 6) {
+    if (
+      arguments_[4] !== "--runtime-manifest" ||
       arguments_[5] === undefined ||
-      resolve(arguments_[5]) !== join(resolvedRoot, ".state", "runtime.json"))
-  ) {
-    throw new ObserverCliUsageError();
+      resolve(arguments_[5]) !== join(resolvedRoot, ".state", "runtime.json")
+    ) {
+      throw new ObserverCliUsageError();
+    }
+    return {
+      projectRoot: resolvedRoot,
+      jobId: FIXED_JOB,
+      runtimeManifestPath: join(resolvedRoot, ".state", "runtime.json"),
+    };
   }
   return { projectRoot: resolvedRoot, jobId: FIXED_JOB };
 }
@@ -97,9 +106,16 @@ export async function runObserverCli(
 ): Promise<0 | 1> {
   try {
     const parsed = parseArguments(arguments_);
+    // Manifest is an execution input, not a decorative argument.
+    const loadRuntime = dependencies.loadRuntime ?? loadRuntimeManifest;
+    const runtime: ResolvedRuntime | undefined =
+      parsed.runtimeManifestPath === undefined
+        ? undefined
+        : loadRuntime(parsed.projectRoot);
     const report = await (dependencies.run ?? runObserverJob)({
       projectRoot: parsed.projectRoot,
       jobId: parsed.jobId,
+      ...(runtime === undefined ? {} : { runtime }),
       ...(signal === undefined ? {} : { signal }),
     });
     io.stdout(
