@@ -8,7 +8,7 @@ import {
   safeCodexEnvironment,
   type CodexInvocation,
 } from "../digest/codex.js";
-import { resolveRuntime, resolveRuntimePlaceholders } from "../config/runtime.js";
+import { loadRuntimeManifest, resolveRuntimePlaceholders, type ResolvedRuntime } from "../config/runtime.js";
 import { loadSecurityProfile } from "../config/security-profile.js";
 
 const EXPECTED_GLOBAL_ARGS = [
@@ -180,7 +180,10 @@ function validateOutputSchema(projectRoot: string): void {
   }
 }
 
-export function loadEditorialConfig(projectRoot: string): EditorialConfig {
+export function loadEditorialConfig(
+  projectRoot: string,
+  runtime?: ResolvedRuntime,
+): EditorialConfig {
   try {
     if (!isAbsolute(projectRoot)) {
       throw new TypeError("project root must be absolute");
@@ -204,12 +207,13 @@ export function loadEditorialConfig(projectRoot: string): EditorialConfig {
       } as EditorialConfig;
     }
     const security = loadSecurityProfile(projectRoot);
+    const resolvedRuntime = runtime ?? loadRuntimeManifest(projectRoot);
     const config = resolveRuntimePlaceholders(
       EditorialConfigSchema.parse({
         ...user,
         codex: security.imageCodex,
       }),
-      resolveRuntime(),
+      resolvedRuntime,
     );
     if (user.mode === "editorial") {
       validateOutputSchema(projectRoot);

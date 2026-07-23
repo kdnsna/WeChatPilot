@@ -5,6 +5,7 @@ import {
   type ObserverCliDependencies,
 } from "../../src/cli/observer.js";
 import type { RunReport } from "../../src/observer/run-report.js";
+import { fakeRuntime } from "../helpers/runtime.js";
 
 const ROOT = "/private/tmp/wechat-observer-cli";
 const RUN_ID = "018f514c-1a2b-7abc-8def-1234567890ac";
@@ -51,6 +52,24 @@ describe("observer CLI", () => {
     expect(streams.stdout).toHaveBeenCalledWith(
       `${JSON.stringify({ ok: true, status: "success", runId: "018f514c" })}\n`,
     );
+  });
+
+  it("accepts only the project-local runtime manifest path", async () => {
+    const streams = io();
+    const runtime = fakeRuntime();
+    const run = vi.fn(async () => report());
+    const loadRuntime = vi.fn(() => runtime);
+    const dependencies: ObserverCliDependencies = { run, loadRuntime };
+    await expect(runObserverCli([
+      "--project-root", ROOT, "--job", "daily-tech-digest",
+      "--runtime-manifest", `${ROOT}/.state/runtime.json`,
+    ], streams, dependencies)).resolves.toBe(0);
+    expect(loadRuntime).toHaveBeenCalledWith(ROOT);
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+      projectRoot: ROOT,
+      jobId: "daily-tech-digest",
+      runtime,
+    }));
   });
 
   it.each([

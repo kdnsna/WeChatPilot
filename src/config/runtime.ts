@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { accessSync, constants, realpathSync } from "node:fs";
+import { accessSync, constants, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 
 import { z } from "zod";
@@ -17,6 +17,15 @@ export const ResolvedRuntimeSchema = z.object({
 }).strict();
 
 export type ResolvedRuntime = z.infer<typeof ResolvedRuntimeSchema>;
+
+export function loadRuntimeManifest(projectRoot: string): ResolvedRuntime {
+  const path = join(projectRoot, ".state", "runtime.json");
+  const stat = lstatSync(path);
+  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600) {
+    throw new Error("Runtime manifest is invalid");
+  }
+  return ResolvedRuntimeSchema.parse(JSON.parse(readFileSync(path, "utf8")) as unknown);
+}
 
 function pathExecutables(name: string, environment: NodeJS.ProcessEnv): string[] {
   const found: string[] = [];

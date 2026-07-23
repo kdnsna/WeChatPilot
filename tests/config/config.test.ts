@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   copyFileSync,
   mkdirSync,
   mkdtempSync,
@@ -13,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { loadConfig } from "../../src/config/load.js";
+import { fakeRuntime, writeRuntimeManifest } from "../helpers/runtime.js";
 
 const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 const temporaryRoots: string[] = [];
@@ -36,6 +38,7 @@ function copyConfigFixture(): string {
   for (const name of ["sources.yaml", "ranking.yaml", "digest.yaml", "security-profile.yaml"]) {
     copyFileSync(join(projectRoot, "config", name), join(configDirectory, name));
   }
+  writeRuntimeManifest(root);
 
   temporaryRoots.push(root);
   return root;
@@ -76,7 +79,7 @@ describe("loadConfig", () => {
   });
 
   it("loads and validates all three project YAML configurations", () => {
-    const config = loadConfig(projectRoot);
+    const config = loadConfig(projectRoot, fakeRuntime());
 
     expect(config.sources.version).toBe(1);
     expect(config.ranking.version).toBe(1);
@@ -97,7 +100,7 @@ describe("loadConfig", () => {
   });
 
   it("keeps ranking formula weights normalized to one", () => {
-    const { weights } = loadConfig(projectRoot).ranking.formula;
+    const { weights } = loadConfig(projectRoot, fakeRuntime()).ranking.formula;
     const total = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
 
     expect(total).toBeCloseTo(1, 12);
@@ -109,14 +112,14 @@ describe("loadConfig", () => {
       crossSource: 0.12,
       sourceQuality: 0.08,
     });
-    expect(loadConfig(projectRoot).ranking.history).toEqual({
+    expect(loadConfig(projectRoot, fakeRuntime()).ranking.history).toEqual({
       lookbackDays: 7,
       repeatFactor: 0.35,
     });
   });
 
   it("contains every required source group and keeps Reddit optional", () => {
-    const { sources } = loadConfig(projectRoot).sources;
+    const { sources } = loadConfig(projectRoot, fakeRuntime()).sources;
 
     expect(Object.keys(sources)).toEqual([
       "hackerNews",
@@ -181,7 +184,7 @@ describe("loadConfig", () => {
   });
 
   it("resolves the detected Codex runtime while preserving the verified security profile", () => {
-    const { codex } = loadConfig(projectRoot).digest;
+    const { codex } = loadConfig(projectRoot, fakeRuntime()).digest;
 
     expect(codex.nodeExecutable).toBe(realpathSync(process.execPath));
     expect(codex.javascriptEntrypoint).toMatch(/^\//u);
@@ -405,3 +408,27 @@ describe("loadConfig", () => {
     },
   );
 });
+
+describe("authoritative runtime manifest", () => {
+  it("fails closed when the runtime manifest is missing", () => {
+    const root = copyConfigFixture();
+    rmSync(join(root, ".state"), { recursive: true, force: true });
+    expect(() => loadConfig(root)).toThrow(/runtime manifest|ENOENT|no such file|invalid/i);
+  });
+
+  it("fails closed when the runtime manifest mode is not 0600", () => {
+    const root = copyConfigFixture();
+    const manifest = join(root, ".state", "runtime.json");
+    chmodSync(manifest, 0o644);
+    expect(() => loadConfig(root)).toThrow(/runtime manifest/i);
+  });
+
+  it("uses the supplied runtime without PATH discovery", () => {
+    const root = copyConfigFixture();
+    const usable = fakeRuntime();
+    const config = loadConfig(root, usable);
+    expect(config.digest.codex.nodeExecutable).toBe(usable.nodeExecutable);
+    expect(config.digest.codex.javascriptEntrypoint).toBe(usable.codexEntrypoint);
+  });
+});
+

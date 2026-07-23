@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { parse } from "yaml";
 import { z } from "zod";
-import { resolveRuntime, resolveRuntimePlaceholders } from "../config/runtime.js";
+import { loadRuntimeManifest, resolveRuntimePlaceholders, type ResolvedRuntime } from "../config/runtime.js";
 
 export const ObserverJobSchema = z
   .object({
@@ -38,13 +38,13 @@ export interface ObserverConfig {
   readonly jobs: readonly [ObserverJob];
 }
 
-export function loadObserverConfig(projectRoot: string): ObserverConfig {
+export function loadObserverConfig(projectRoot: string, runtime?: ResolvedRuntime): ObserverConfig {
   try {
     const path = join(projectRoot, "config", "observer-jobs.yaml");
     const document = parse(readFileSync(path, "utf8")) as unknown;
     return resolveRuntimePlaceholders(
       ObserverConfigSchema.parse(document),
-      resolveRuntime(),
+      runtime ?? loadRuntimeManifest(projectRoot),
     );
   } catch {
     const error = new Error("Invalid observer configuration");

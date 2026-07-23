@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 import {
   deliverRunReport,
+  recordRunReportNotificationDisposition,
   runDeliveryDisposition,
   type DeliverRunReportOptions,
   type DeliverRunReportResult,
@@ -57,6 +58,7 @@ import {
 import {
   attachIssue,
   buildRunReport,
+  RunReportSchema,
   type BuildRunReportOptions,
   type RunAuthority,
   type RunReport,
@@ -78,6 +80,7 @@ import {
 } from "../observer/task-lock.js";
 import { buildStatusEditorialReport } from "../report/editorial.js";
 import { shanghaiDateKey } from "../lib/time.js";
+import type { ResolvedRuntime } from "../config/runtime.js";
 
 const RECOVERY_SUMMARY = "任务因主机或进程中断，已在恢复后补记";
 const RENDER_FAILURE_CODE = "OBSERVER_REPORT_RENDER_FAILED";
@@ -91,7 +94,10 @@ interface PrepareObserverSenderOptions {
 }
 
 export interface ObserverDependencies {
-  readonly loadConfig?: (projectRoot: string) => ObserverConfig;
+  readonly loadConfig?: (
+    projectRoot: string,
+    runtime?: ResolvedRuntime,
+  ) => ObserverConfig;
   readonly recover?: (
     options: RecoverInterruptedRunsOptions,
   ) => RecoverInterruptedRunsResult;
@@ -100,6 +106,7 @@ export interface ObserverDependencies {
     readonly projectRoot: string;
     readonly report: RunReport;
   }) => RunDeliveryDisposition;
+  readonly recordNotificationDisposition?: typeof recordRunReportNotificationDisposition;
   readonly acquireTaskLock?: (
     options: AcquireObserverTaskLockOptions,
   ) => Promise<ObserverTaskLock>;
@@ -133,6 +140,7 @@ export interface ObserverDependencies {
 export interface RunObserverJobOptions {
   readonly projectRoot: string;
   readonly jobId: "daily-tech-digest";
+  readonly runtime?: ResolvedRuntime;
   readonly signal?: AbortSignal;
   readonly environment?: NodeJS.ProcessEnv;
   readonly now?: () => Date;
@@ -144,7 +152,10 @@ export interface RunObserverJobOptions {
 }
 
 interface ResolvedObserverDependencies {
-  readonly loadConfig: (projectRoot: string) => ObserverConfig;
+  readonly loadConfig: (
+    projectRoot: string,
+    runtime?: ResolvedRuntime,
+  ) => ObserverConfig;
   readonly recover: (
     options: RecoverInterruptedRunsOptions,
   ) => RecoverInterruptedRunsResult;
@@ -153,13 +164,17 @@ interface ResolvedObserverDependencies {
     readonly projectRoot: string;
     readonly report: RunReport;
   }) => RunDeliveryDisposition;
+  readonly recordNotificationDisposition: typeof recordRunReportNotificationDisposition;
   readonly acquireTaskLock: (
     options: AcquireObserverTaskLockOptions,
   ) => Promise<ObserverTaskLock>;
   readonly runJob: (options: RunManagedJobOptions) => Promise<ManagedJobOutcome>;
   readonly normalize: (options: BuildRunReportOptions) => RunReport;
   readonly finishRecord: (projectRoot: string, report: RunReport) => void;
-  readonly loadEditorial: (projectRoot: string) => EditorialConfig;
+  readonly loadEditorial: (
+    projectRoot: string,
+    runtime?: ResolvedRuntime,
+  ) => EditorialConfig;
   readonly assignIssue: (options: {
     readonly projectRoot: string;
     readonly runId: string;
@@ -195,6 +210,8 @@ function resolvedDependencies(
     listFinalReports: supplied?.listFinalReports ?? listFinalRunReports,
     deliveryDisposition:
       supplied?.deliveryDisposition ?? runDeliveryDisposition,
+    recordNotificationDisposition:
+      supplied?.recordNotificationDisposition ?? recordRunReportNotificationDisposition,
     acquireTaskLock: supplied?.acquireTaskLock ?? acquireObserverTaskLock,
     runJob: supplied?.runJob ?? runManagedJob,
     normalize: supplied?.normalize ?? buildRunReport,
@@ -294,7 +311,10 @@ async function prepareFinalReportArtifacts(
   report: RunReport,
   disposition: RunDeliveryDisposition,
 ): Promise<PreparedFinalReportArtifacts> {
-  const imageConfig = dependencies.loadEditorial(options.projectRoot);
+  const imageConfig = dependencies.loadEditorial(
+    options.projectRoot,
+    options.runtime,
+  );
   const mode = visualMode(imageConfig);
 
   if (mode === "off") {
@@ -381,27 +401,44 @@ async function deliverFinalReport(
     throw new Error(SAFE_RENDER_ERROR);
   }
 
-  const senderOptions = {
-    projectRoot: options.projectRoot,
-    report: prepared.report,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  };
-  const sendText = await dependencies.prepareText(senderOptions);
-  const sendImage = prepared.imageEnabled
-    ? await dependencies.prepareImage(senderOptions)
-    : async () => ({ status: "sent" as const });
+  try {
+    const senderOptions = {
+      projectRoot: options.projectRoot,
+      report: prepared.report,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    };
+    const sendText = await dependencies.prepareText(senderOptions);
+    const sendImage = prepared.imageEnabled
+      ? await dependencies.prepareImage(senderOptions)
+      : async () => ({ status: "sent" as const });
 
-  await dependencies.deliver({
-    projectRoot: options.projectRoot,
-    report: prepared.report,
-    sendText,
-    sendImage,
-    ...(prepared.artifact === undefined
-      ? {}
-      : { imagePath: prepared.artifact.pngPath }),
-    ...(options.now === undefined ? {} : { now: options.now }),
-  });
+    await dependencies.deliver({
+      projectRoot: options.projectRoot,
+      report: prepared.report,
+      sendText,
+      sendImage,
+      ...(prepared.artifact === undefined
+        ? {}
+        : { imagePath: prepared.artifact.pngPath }),
+      ...(options.now === undefined ? {} : { now: options.now }),
+    });
+  } catch (error) {
+    if (typeof error === "object" && error !== null) {
+      Object.defineProperty(error, "canonicalReport", {
+        value: prepared.report,
+        enumerable: false,
+      });
+    }
+    throw error;
+  }
   return prepared.report;
+}
+
+function canonicalReportFromError(error: unknown, fallback: RunReport): RunReport {
+  if (typeof error !== "object" || error === null) return fallback;
+  const candidate = (error as { readonly canonicalReport?: unknown }).canonicalReport;
+  const parsed = RunReportSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : fallback;
 }
 
 function recoveredReport(
@@ -435,13 +472,44 @@ function shouldNotify(job: ObserverJob, report: RunReport): boolean {
   return report.status !== "success" && report.status !== "skipped";
 }
 
+function notificationDisposition(
+  job: ObserverJob,
+): "not-required" | "notification-disabled" {
+  return job.notify === "never" ? "notification-disabled" : "not-required";
+}
+
+function reconcileSuppressedReport(
+  options: RunObserverJobOptions,
+  dependencies: ResolvedObserverDependencies,
+  report: RunReport,
+  job: ObserverJob,
+): void {
+  dependencies.recordNotificationDisposition({
+    projectRoot: options.projectRoot,
+    report,
+    disposition: notificationDisposition(job),
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
+}
+
 async function queueHistoricalReports(
   options: RunObserverJobOptions,
   dependencies: ResolvedObserverDependencies,
   recovery: RecoverInterruptedRunsResult,
+  config: ObserverConfig,
 ): Promise<void> {
   for (const authority of recovery.recovered) {
     const report = recoveredReport(options, dependencies, authority);
+    let reportJob: ObserverJob;
+    try {
+      reportJob = findObserverJob(config, report.taskId);
+    } catch {
+      continue;
+    }
+    if (!shouldNotify(reportJob, report)) {
+      reconcileSuppressedReport(options, dependencies, report, reportJob);
+      continue;
+    }
     const disposition = dependencies.deliveryDisposition({
       projectRoot: options.projectRoot,
       report,
@@ -457,6 +525,16 @@ async function queueHistoricalReports(
   }
 
   for (const report of dependencies.listFinalReports(options.projectRoot)) {
+    let reportJob: ObserverJob;
+    try {
+      reportJob = findObserverJob(config, report.taskId);
+    } catch {
+      continue;
+    }
+    if (!shouldNotify(reportJob, report)) {
+      reconcileSuppressedReport(options, dependencies, report, reportJob);
+      continue;
+    }
     const disposition = dependencies.deliveryDisposition({
       projectRoot: options.projectRoot,
       report,
@@ -518,14 +596,17 @@ export async function runObserverJob(
   options: RunObserverJobOptions,
 ): Promise<RunReport> {
   const dependencies = resolvedDependencies(options.dependencies);
-  const config = dependencies.loadConfig(options.projectRoot);
+  const config = dependencies.loadConfig(
+    options.projectRoot,
+    options.runtime,
+  );
   const job = findObserverJob(config, options.jobId);
   const recovery = dependencies.recover({
     projectRoot: options.projectRoot,
     ...(options.now === undefined ? {} : { now: options.now }),
   });
 
-  await queueHistoricalReports(options, dependencies, recovery);
+  await queueHistoricalReports(options, dependencies, recovery, config);
   await drainHistoricalOutbox(options, dependencies);
 
   if (recovery.activeTaskIds.includes(job.id)) {
@@ -555,6 +636,13 @@ export async function runObserverJob(
     dependencies.finishRecord(options.projectRoot, report);
 
     if (!shouldNotify(job, report)) {
+      dependencies.recordNotificationDisposition({
+        projectRoot: options.projectRoot,
+        report,
+        disposition:
+          job.notify === "never" ? "notification-disabled" : "not-required",
+        ...(options.now === undefined ? {} : { now: options.now }),
+      });
       return report;
     }
 
@@ -568,7 +656,7 @@ export async function runObserverJob(
     } catch (error) {
       dependencies.enqueueOutbox({
         projectRoot: options.projectRoot,
-        report,
+        report: canonicalReportFromError(error, report),
         priority: 5,
         ...(options.now === undefined ? {} : { now: options.now }),
       });

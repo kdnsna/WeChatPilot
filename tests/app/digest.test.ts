@@ -15,6 +15,7 @@ import type { RegisteredCollector } from "../../src/collectors/run.js";
 import type { HttpClient } from "../../src/lib/http.js";
 import { Category, type NormalizedItem } from "../../src/types/item.js";
 import { validEditorial } from "../helpers/editorial.js";
+import { writeRuntimeManifest } from "../helpers/runtime.js";
 
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 const NOW = new Date("2026-07-18T06:00:00.000Z");
@@ -42,6 +43,7 @@ function project(): string {
     join(repositoryRoot, "prompts", "daily-digest.md"),
     join(root, "prompts", "daily-digest.md"),
   );
+  writeRuntimeManifest(root);
   return root;
 }
 

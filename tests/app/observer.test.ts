@@ -579,6 +579,127 @@ describe("observer orchestration", () => {
     expect(calls).toEqual([reports[0]!.runId, reports[1]!.runId, "run-job", CURRENT_ID]);
   });
 
+  it.each([
+    ["on-failure", ["failed"], 1, "not-required"],
+    ["never", [], 0, "notification-disabled"],
+  ] as const)(
+    "does not enqueue intentionally suppressed historical reports for %s",
+    async (notify, expectedStatuses, expectedEnqueues, disposition) => {
+      const successful = report("018f514c-1a2b-7abc-8def-1234567890d1", "success");
+      const failed = report("018f514c-1a2b-7abc-8def-1234567890d2", "failed");
+      const enqueueOutbox = vi.fn(dependencies().enqueueOutbox);
+      const recordNotificationDisposition = vi.fn();
+      const policyJob = { ...job, notify };
+      const deps = dependencies({
+        loadConfig: vi.fn(() => ({ version: 1 as const, jobs: [policyJob] } as ObserverConfig)),
+        listFinalReports: vi.fn(() => [successful, failed]),
+        deliveryDisposition: vi.fn(() => "missing" as const),
+        enqueueOutbox,
+        recordNotificationDisposition,
+        runJob: vi.fn(async () => ({
+          authority: authority(CURRENT_ID, "success"),
+          draft: null,
+        })),
+      });
+
+      await runObserverJob({
+        projectRoot: ROOT,
+        jobId: policyJob.id,
+        dependencies: deps,
+      });
+
+      expect(enqueueOutbox).toHaveBeenCalledTimes(expectedEnqueues);
+      expect(enqueueOutbox.mock.calls.map(([options]) => options.report.status)).toEqual(
+        expectedStatuses,
+      );
+      const historicalDispositions = recordNotificationDisposition.mock.calls
+        .map(([options]) => options)
+        .filter((options) => options.report.runId !== CURRENT_ID)
+        .map((options) => [options.report.status, options.disposition]);
+      if (notify === "on-failure") {
+        expect(historicalDispositions).toEqual([["success", disposition]]);
+      } else {
+        expect(historicalDispositions).toEqual([
+          ["success", disposition],
+          ["failed", disposition],
+        ]);
+      }
+    },
+  );
+
+  it("backfills suppression on a second start when the final report already exists", async () => {
+    const successful = report("018f514c-1a2b-7abc-8def-1234567890d3", "success");
+    const recordNotificationDisposition = vi.fn();
+    const policyJob = { ...job, notify: "on-failure" as const };
+    const shared = {
+      loadConfig: vi.fn(() => ({ version: 1 as const, jobs: [policyJob] } as ObserverConfig)),
+      listFinalReports: vi.fn(() => [successful]),
+      deliveryDisposition: vi.fn(() => "missing" as const),
+      enqueueOutbox: vi.fn(dependencies().enqueueOutbox),
+      recordNotificationDisposition,
+      // Keep the current run suppressed as well so the assertion isolates
+      // historical reconciliation rather than current delivery side effects.
+      runJob: vi.fn(async () => ({
+        authority: authority(CURRENT_ID, "success"),
+        draft: null,
+      })),
+    };
+
+    await runObserverJob({
+      projectRoot: ROOT,
+      jobId: policyJob.id,
+      dependencies: dependencies(shared),
+    });
+    await runObserverJob({
+      projectRoot: ROOT,
+      jobId: policyJob.id,
+      dependencies: dependencies(shared),
+    });
+
+    expect(shared.enqueueOutbox).not.toHaveBeenCalled();
+    const historicalCalls = recordNotificationDisposition.mock.calls
+      .map(([options]) => options)
+      .filter((options) => options.report.runId === successful.runId);
+    expect(historicalCalls).toHaveLength(2);
+    expect(historicalCalls[0]).toEqual({
+      projectRoot: ROOT,
+      report: successful,
+      disposition: "not-required",
+    });
+  });
+
+  it.each([
+    ["on-failure", "success", "not-required"],
+    ["never", "failed", "notification-disabled"],
+  ] as const)(
+    "records %s when the current %s report is intentionally suppressed",
+    async (notify, status, disposition) => {
+      const recordNotificationDisposition = vi.fn();
+      const policyJob = { ...job, notify };
+      const deps = dependencies({
+        loadConfig: vi.fn(() => ({ version: 1 as const, jobs: [policyJob] } as ObserverConfig)),
+        runJob: vi.fn(async () => ({
+          authority: authority(CURRENT_ID, status),
+          draft: null,
+        })),
+      }) as ObserverDependencies & { recordNotificationDisposition: typeof recordNotificationDisposition };
+      deps.recordNotificationDisposition = recordNotificationDisposition;
+
+      await runObserverJob({
+        projectRoot: ROOT,
+        jobId: policyJob.id,
+        dependencies: deps,
+      });
+
+      expect(recordNotificationDisposition).toHaveBeenCalledWith({
+        projectRoot: ROOT,
+        report: report(CURRENT_ID, status),
+        disposition,
+      });
+      expect(deps.deliver).not.toHaveBeenCalled();
+    },
+  );
+
   it("refuses a new run when the old runner is dead but its child is still alive", async () => {
     const root = projectRoot();
     startRunRecord({
@@ -786,5 +907,25 @@ describe("observer orchestration", () => {
     ).rejects.toThrow("delivery failed");
     expect(listFinalRunReports(root)).toEqual([report(CURRENT_ID)]);
     expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("enqueues the numbered canonical editorial report when image delivery is rejected", async () => {
+    const enqueued: RunReport[] = [];
+    const deps = dependencies({
+      normalize: vi.fn(() => editorialReport(CURRENT_ID)),
+      deliver: vi.fn(async () => {
+        throw new WechatDeliveryRejectedError();
+      }),
+      enqueueOutbox: vi.fn((options) => {
+        enqueued.push(options.report);
+        return dependencies().enqueueOutbox!(options);
+      }),
+    });
+
+    await expect(
+      runObserverJob({ projectRoot: ROOT, jobId: job.id, dependencies: deps }),
+    ).rejects.toBeInstanceOf(WechatDeliveryRejectedError);
+
+    expect(enqueued).toEqual([numberedEditorialReport(CURRENT_ID)]);
   });
 });

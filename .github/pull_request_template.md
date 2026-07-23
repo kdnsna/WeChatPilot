@@ -6,7 +6,7 @@
 
 - [ ] 不扩大微信单向发送边界
 - [ ] 不引入凭据、Cookie、Token 或个人路径数据
-- [ ] 不修改 `cli-in-wechat` 固定提交，或已完成独立审计
+- [ ] 不重新引入 `cli-in-wechat`、其他上游控制入口或任何 gitlink/submodule
 - [ ] 不启用 Codex 高权限、危险沙箱参数或微信远程控制
 
 ## 验证

@@ -16,6 +16,7 @@ import {
   buildEditorialImageInvocation,
   loadEditorialConfig,
 } from "../../src/observer/editorial-config.js";
+import { fakeRuntime, writeRuntimeManifest } from "../helpers/runtime.js";
 
 const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 const temporaryRoots: string[] = [];
@@ -34,6 +35,7 @@ function fixtureRoot(): string {
       join(configDirectory, name),
     );
   }
+  writeRuntimeManifest(root);
   temporaryRoots.push(root);
   return root;
 }
@@ -64,7 +66,7 @@ afterEach(() => {
 
 describe("editorial image configuration", () => {
   it("loads one exact image-only Codex profile", () => {
-    const config = loadEditorialConfig(projectRoot);
+    const config = loadEditorialConfig(projectRoot, fakeRuntime());
     expect(config.mode).toBe("editorial");
     expect(config.canvas).toEqual({
       width: 1080,
@@ -125,5 +127,14 @@ describe("editorial image configuration", () => {
     }
     expect(message).toBe("Invalid editorial report configuration");
     expect(message).not.toContain(secretLikeValue);
+  });
+
+
+  it("fails closed without an authoritative runtime", () => {
+    const root = fixtureRoot();
+    rmSync(join(root, ".state"), { recursive: true, force: true });
+    expect(() => loadEditorialConfig(root)).toThrowError(
+      "Invalid editorial report configuration",
+    );
   });
 });

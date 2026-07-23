@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { writeRuntimeManifest } from "../helpers/runtime.js";
 
 import { runDailyCollection } from "../../src/app/collect.js";
 import type { HttpClient } from "../../src/lib/http.js";
@@ -35,6 +36,7 @@ function root(): string {
   ]) {
     copyFileSync(join(repositoryRoot, "config", name), join(project, "config", name));
   }
+  writeRuntimeManifest(project);
   return project;
 }
 

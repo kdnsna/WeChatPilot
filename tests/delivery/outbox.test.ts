@@ -9,6 +9,10 @@ import {
   inspectOutbox,
   processRunReportOutbox,
 } from "../../src/delivery/outbox.js";
+import {
+  recordRunReportNotificationDisposition,
+  runReportSha256,
+} from "../../src/delivery/run-report-delivery.js";
 import type { RunReport } from "../../src/observer/run-report.js";
 
 const roots: string[] = [];
@@ -105,5 +109,102 @@ describe("delivery outbox", () => {
       readFileSync(join(root, ".state", "delivery", "outbox", `${item.envelope.id}.json`), "utf8"),
     ) as { envelope: { disposition: string } };
     expect(stored.envelope.disposition).toBe("manual-review");
+  });
+
+  it("replaces an unattempted payload with the canonical finalized report", () => {
+    const root = project();
+    const initial = report("018f514c-1a2b-7abc-8def-1234567890c2");
+    const canonical: RunReport = {
+      ...initial,
+      issueNumber: 7,
+      issueLabel: "WP-000007",
+    };
+    const initialItem = enqueueRunReportOutbox({ projectRoot: root, report: initial });
+
+    const item = enqueueRunReportOutbox({ projectRoot: root, report: canonical });
+
+    expect(item.report).toEqual(canonical);
+    expect(item.envelope.payloadSha256).not.toBe(initialItem.envelope.payloadSha256);
+    expect(item.envelope.payloadSha256).toBe(runReportSha256(canonical));
+  });
+
+  it("uses the canonical report hash shared with the delivery ledger", () => {
+    const root = project();
+    const value = report("018f514c-1a2b-7abc-8def-1234567890d1");
+    const item = enqueueRunReportOutbox({ projectRoot: root, report: value });
+    expect(item.envelope.payloadSha256).toBe(runReportSha256(value));
+    expect(item.envelope.id).toBe(value.runId);
+  });
+
+  it("treats notification suppression as terminal and never creates senders", async () => {
+    const root = project();
+    const value = report("018f514c-1a2b-7abc-8def-1234567890d2", "success");
+    const item = enqueueRunReportOutbox({ projectRoot: root, report: value });
+    chmodSync(join(root, ".state", "delivery", "outbox", `${item.envelope.id}.json`), 0o600);
+    recordRunReportNotificationDisposition({
+      projectRoot: root,
+      report: value,
+      disposition: "not-required",
+    });
+    const createSenders = vi.fn(async () => ({
+      sendText: async () => ({ status: "sent" as const, chunks: 1 }),
+      sendImage: async () => ({ status: "sent" as const }),
+    }));
+    const deliver = vi.fn(async () => ({
+      status: "sent" as const,
+      textChunks: 1,
+      image: "not-generated" as const,
+      textAttempt: 1,
+      imageAttempt: 0,
+    }));
+    const result = await processRunReportOutbox({
+      projectRoot: root,
+      historyLimit: 3,
+      deliver,
+      createSenders,
+    });
+    expect(result.sent).toBe(1);
+    expect(createSenders).not.toHaveBeenCalled();
+    expect(deliver).not.toHaveBeenCalled();
+    const stored = JSON.parse(
+      readFileSync(join(root, ".state", "delivery", "outbox", `${item.envelope.id}.json`), "utf8"),
+    ) as { envelope: { disposition: string; payloadSha256: string } };
+    expect(stored.envelope.disposition).toBe("sent");
+    expect(stored.envelope.payloadSha256).toBe(runReportSha256(value));
+  });
+
+  it("recomputes payload hash after prepare mutates the canonical report", async () => {
+    const root = project();
+    const initial = report("018f514c-1a2b-7abc-8def-1234567890d3");
+    const item = enqueueRunReportOutbox({ projectRoot: root, report: initial });
+    chmodSync(join(root, ".state", "delivery", "outbox", `${item.envelope.id}.json`), 0o600);
+    const numbered: RunReport = {
+      ...initial,
+      issueNumber: 9,
+      issueLabel: "WP-000009",
+    };
+    await processRunReportOutbox({
+      projectRoot: root,
+      historyLimit: 3,
+      prepare: async () => ({ report: numbered, imagePath: "/tmp/wp-9.png" }),
+      deliver: async () => ({
+        status: "sent" as const,
+        textChunks: 1,
+        image: "sent" as const,
+        textAttempt: 1,
+        imageAttempt: 1,
+      }),
+      sendText: async () => ({ status: "sent", chunks: 1 }),
+      sendImage: async () => ({ status: "sent" }),
+    });
+    const stored = JSON.parse(
+      readFileSync(join(root, ".state", "delivery", "outbox", `${item.envelope.id}.json`), "utf8"),
+    ) as {
+      report: RunReport;
+      envelope: { payloadSha256: string; disposition: string };
+    };
+    expect(stored.report).toEqual(numbered);
+    expect(stored.envelope.payloadSha256).toBe(runReportSha256(numbered));
+    expect(stored.envelope.disposition).toBe("sent");
   });
 });

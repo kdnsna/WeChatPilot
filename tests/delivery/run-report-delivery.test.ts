@@ -34,6 +34,7 @@ import {
   runDeliveryDisposition,
   runReportSha256,
 } from "../../src/delivery/run-report-delivery.js";
+import * as runReportDelivery from "../../src/delivery/run-report-delivery.js";
 import {
   WechatDeliveryIndeterminateError,
   WechatDeliveryRejectedError,
@@ -827,6 +828,33 @@ describe("run report delivery ledger", () => {
       invalid: 0,
     });
     expect(existsSync(join(root, ".state"))).toBe(false);
+  });
+
+  it.each([
+    ["not-required", "not-required"],
+    ["notification-disabled", "notification-disabled"],
+  ] as const)("persists %s as a terminal notification disposition", (requested, expected) => {
+    const root = project();
+    const record = (
+      runReportDelivery as unknown as {
+        recordRunReportNotificationDisposition?: (options: {
+          readonly projectRoot: string;
+          readonly report: RunReport;
+          readonly disposition: "not-required" | "notification-disabled";
+        }) => void;
+      }
+    ).recordRunReportNotificationDisposition;
+
+    expect(record).toBeTypeOf("function");
+    if (record === undefined) return;
+    record({ projectRoot: root, report: report(), disposition: requested });
+
+    expect(runDeliveryDisposition({ projectRoot: root, report: report() })).toBe(expected);
+    expect(inspectRunDeliveryState({ projectRoot: root, reports: [report()] })).toEqual({
+      pending: 0,
+      indeterminate: 0,
+      invalid: 0,
+    });
   });
 
   it("locally sanitizes untrusted authority fields into bounded single lines", () => {
